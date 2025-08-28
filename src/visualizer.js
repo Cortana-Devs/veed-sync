@@ -804,6 +804,46 @@ export default class Visualizer {
     return renderOutput;
   }
 
+  // Experimental: control particles via public API
+  setParticlesEnabled(enabled) {
+    if (this.renderer && this.renderer.particles) this.renderer.particles.setEnabled(enabled);
+  }
+
+  configureParticles(config) {
+    if (this.renderer && this.renderer.particles) this.renderer.particles.configure(config);
+  }
+
+  // Particle model controls
+  async loadParticleModelFromURL(url, opts = {}) {
+    if (this.renderer && this.renderer.particleModel) {
+      await this.renderer.particleModel.loadOBJFromURL(url, opts.sampleEvery || 4);
+      if (opts.enabled != null) this.renderer.particleModel.setEnabled(!!opts.enabled);
+      if (opts.configure) this.renderer.particleModel.configure(opts.configure);
+    }
+  }
+
+  setParticleModelEnabled(enabled) {
+    if (this.renderer && this.renderer.particleModel) this.renderer.particleModel.setEnabled(enabled);
+  }
+
+  configureParticleModel(config) {
+    if (this.renderer && this.renderer.particleModel) this.renderer.particleModel.configure(config);
+  }
+
+  // Model effects facade
+  setModelEffectsEnabled(enabled) {
+    if (this.renderer && this.renderer.setModelEffectsEnabled) this.renderer.setModelEffectsEnabled(enabled);
+  }
+  setModelOnlyMode(enabled) {
+    if (this.renderer && this.renderer.setModelOnlyMode) this.renderer.setModelOnlyMode(enabled);
+  }
+  setModelBaseParams(params) {
+    if (this.renderer && this.renderer.setModelBaseParams) this.renderer.setModelBaseParams(params);
+  }
+  async loadModelWithTransition(url, opts) {
+    if (this.renderer && this.renderer.loadModelWithTransition) return this.renderer.loadModelWithTransition(url, opts);
+  }
+
   launchSongTitleAnim(text) {
     this.renderer.launchSongTitleAnim(text);
   }

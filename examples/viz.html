@@ -42,7 +42,58 @@
     let analyser = null;
     let levelArray = null;
     let userSyncOffsetMs = Number(localStorage.getItem('syncOffsetMs') || '0');
+    let modelsIndex = null;
 
+    function openModal(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('open');
+    }
+    function closeModal(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('open');
+    }
+
+    function renderModelsPanel() {
+      const catSel = document.getElementById('modelsCategory');
+      const list = document.getElementById('modelsList');
+      if (!catSel || !list) return;
+      catSel.innerHTML = '';
+      const cats = Object.keys(modelsIndex || {});
+      cats.forEach((c) => {
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = c; catSel.appendChild(opt);
+      });
+      const drawList = () => {
+        list.innerHTML = '';
+        const cat = catSel.value || cats[0];
+        const items = (modelsIndex && modelsIndex[cat]) || [];
+        items.forEach((it) => {
+          const div = document.createElement('div');
+          div.className = 'model-item';
+          div.textContent = `${it.name}`;
+          div.title = it.file;
+          div.addEventListener('click', async () => {
+            const sample = Math.max(1, parseInt(document.getElementById('modelsSample').value || '3', 10));
+            const blend = Math.max(0, parseFloat(document.getElementById('modelsBlend').value || '1.5'));
+            const preload = document.getElementById('modelsPreload').checked;
+            const url = it.file;
+            try {
+              await visualizer.loadModelWithTransition(url, { sampleEvery: sample, blendTime: blend });
+              visualizer.setModelEffectsEnabled(true);
+              if (preload) localStorage.setItem('modelURL', url);
+              showToast(`Loaded model: ${it.name}`);
+            } catch (e) {
+              console.error('Failed to load model', e);
+              showToast('Failed to load model', true);
+            }
+          });
+          list.appendChild(div);
+        });
+      };
+      catSel.addEventListener('change', drawList);
+      catSel.value = cats[0] || '';
+      drawList();
+    }
     function hideHero() {
       hero.classList.add('hidden');
     }
@@ -56,7 +107,11 @@
         analyser.fftSize = 2048;
         levelArray = new Uint8Array(analyser.frequencyBinCount);
         tapNode.connect(analyser);
-        tapNode.connect(audioContext.destination);
+        // Route to destination based on monitor toggle
+        const monitor = (localStorage.getItem('monitorAudio') || '1') === '1';
+        try { tapNode.disconnect(); } catch(_) {}
+        tapNode.connect(analyser);
+        if (monitor) tapNode.connect(audioContext.destination);
         setupLevelMeter();
       }
       node.connect(tapNode);
@@ -66,9 +121,19 @@
     function startRenderer() {
       if (rendering) return;
       rendering = true;
+      let lastAudioT = null;
       const loop = () => {
         if (!rendering) return;
-        visualizer.render();
+        // Drive elapsed from audio clock for tighter sync
+        // Ensure context is running
+        if (audioContext && audioContext.state === 'suspended') {
+          audioContext.resume().catch(() => {});
+        }
+        const t = getAudioNow();
+        let dt = 0;
+        if (lastAudioT != null) dt = Math.max(1/240, Math.min(0.2, t - lastAudioT));
+        lastAudioT = t;
+        visualizer.render({ elapsedTime: dt });
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
@@ -359,6 +424,20 @@
         backend,
         directCanvas: direct
       });
+      // Apply stored particle settings
+      const particlesOn = (localStorage.getItem('particlesOn') || '0') === '1';
+      const particlesCount = parseInt(localStorage.getItem('particlesCount') || '600', 10);
+      visualizer.setParticlesEnabled?.(particlesOn);
+      visualizer.configureParticles?.({ maxCount: particlesCount });
+      // Apply stored model FX settings and preload a model if present
+      const modelFx = (localStorage.getItem('modelFx') || '0') === '1';
+      const modelOnly = (localStorage.getItem('modelOnly') || '0') === '1';
+      visualizer.setModelEffectsEnabled?.(modelFx);
+      visualizer.setModelOnlyMode?.(modelOnly);
+      const preloadModel = localStorage.getItem('modelURL');
+      if (preloadModel) {
+        try { await visualizer.loadModelWithTransition(preloadModel, { blendTime: 1.5, sampleEvery: 3 }); } catch(_) {}
+      }
       try {
         visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
       } catch (e) {
@@ -369,6 +448,8 @@
       buildPlaylist();
       resizeRenderer();
       window.addEventListener('resize', resizeRenderer);
+      // Auto-start rendering so the user sees visuals immediately
+      try { startRenderer(); } catch (_) {}
 
       // Packs toggles
       const packBase = document.getElementById('packBase');
@@ -385,6 +466,11 @@
       };
       packBase?.addEventListener('change', applyPacks);
       packExtra?.addEventListener('change', applyPacks);
+      // Try to load models index for the Models panel
+      try {
+        const res = await fetch('assets/models/index.json', { cache: 'no-cache' });
+        if (res.ok) modelsIndex = await res.json();
+      } catch (_) {}
     }
 
     // UI wiring
@@ -458,6 +544,11 @@
       // Backend controls
       const backendSel = document.getElementById('settingBackend');
       const directCb = document.getElementById('settingDirect');
+      const particleCb = document.getElementById('settingParticles');
+      const particleNum = document.getElementById('settingParticleCount');
+      const monitorCb = document.getElementById('settingMonitor');
+      const modelFxCb = document.getElementById('settingModelEffects');
+      const modelOnlyCb = document.getElementById('settingModelOnly');
       if (backendSel) {
         const stored = localStorage.getItem('backendPref') || 'auto';
         backendSel.value = stored;
@@ -467,6 +558,60 @@
         const storedD = (localStorage.getItem('directDraw') || '0') === '1';
         directCb.checked = storedD;
         directCb.addEventListener('change', () => { reinitVisualizer(); });
+      }
+      if (particleCb) {
+        const pOn = (localStorage.getItem('particlesOn') || '0') === '1';
+        particleCb.checked = pOn;
+        particleCb.addEventListener('change', (e) => {
+          localStorage.setItem('particlesOn', e.target.checked ? '1' : '0');
+          visualizer.setParticlesEnabled?.(e.target.checked);
+          showToast(`Particles ${e.target.checked ? 'enabled' : 'disabled'}`);
+        });
+      }
+      if (particleNum) {
+        particleNum.value = String(parseInt(localStorage.getItem('particlesCount') || '600', 10));
+        particleNum.addEventListener('change', (e) => {
+          const val = Math.max(0, Math.min(5000, parseInt(e.target.value || '0', 10)));
+          localStorage.setItem('particlesCount', String(val));
+          visualizer.configureParticles?.({ maxCount: val });
+          showToast(`Particles: ${val}`);
+        });
+      }
+      if (monitorCb) {
+        const storedM = (localStorage.getItem('monitorAudio') || '1') === '1';
+        monitorCb.checked = storedM;
+        monitorCb.addEventListener('change', (e) => {
+          localStorage.setItem('monitorAudio', e.target.checked ? '1' : '0');
+          // Rehook tap routing
+          try {
+            if (tapNode) {
+              tapNode.disconnect();
+              tapNode.connect(analyser);
+              if (e.target.checked && audioContext?.destination) tapNode.connect(audioContext.destination);
+            }
+          } catch (_) {}
+          showToast(`Monitor ${e.target.checked ? 'on' : 'off'}`);
+        });
+      }
+      if (modelFxCb) {
+        const stored = (localStorage.getItem('modelFx') || '0') === '1';
+        modelFxCb.checked = stored;
+        visualizer.setModelEffectsEnabled(stored);
+        modelFxCb.addEventListener('change', (e) => {
+          localStorage.setItem('modelFx', e.target.checked ? '1' : '0');
+          visualizer.setModelEffectsEnabled(e.target.checked);
+          showToast(`Model effects ${e.target.checked ? 'enabled' : 'disabled'}`);
+        });
+      }
+      if (modelOnlyCb) {
+        const stored = (localStorage.getItem('modelOnly') || '0') === '1';
+        modelOnlyCb.checked = stored;
+        visualizer.setModelOnlyMode(stored);
+        modelOnlyCb.addEventListener('change', (e) => {
+          localStorage.setItem('modelOnly', e.target.checked ? '1' : '0');
+          visualizer.setModelOnlyMode(e.target.checked);
+          showToast(`Mode: ${e.target.checked ? 'Model-only' : 'Mixed'}`);
+        });
       }
 
       // Sync offset controls
@@ -509,6 +654,20 @@
       // Top bar actions
       document.getElementById('extensionsBtn').addEventListener('click', () => openModal('packsModal'));
       document.getElementById('aboutBtn').addEventListener('click', () => openModal('aboutModal'));
+      const modelsBtn = document.getElementById('modelsBtn');
+      if (modelsBtn) {
+        modelsBtn.addEventListener('click', () => {
+          if (!modelsIndex) {
+            fetch('assets/models/index.json', { cache: 'no-cache' })
+              .then(r => r.ok ? r.json() : null)
+              .then(j => { modelsIndex = j; renderModelsPanel(); openModal('modelsModal'); })
+              .catch(() => { showToast('No models index found', true); });
+          } else {
+            renderModelsPanel();
+            openModal('modelsModal');
+          }
+        });
+      }
     });
   </script>
 
@@ -693,6 +852,9 @@
     .chip { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); margin-right: 8px; font-size: 12px; }
     .row { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin: 10px 0; }
     .row label { font-size: 14px; }
+    .models-grid { display:grid; grid-template-columns: 1fr; gap: 8px; max-height: 40vh; overflow:auto; }
+    .model-item { padding: 8px 10px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; cursor:pointer; }
+    .model-item:hover { background: rgba(255,255,255,0.06); }
   </style>
 </head>
 <body>
@@ -704,6 +866,7 @@
     <div class="top-actions">
       <i id="extensionsBtn" class="fa-solid fa-puzzle-piece" title="Preset packs"></i>
       <i id="aboutBtn" class="fa-regular fa-circle-question" title="About"></i>
+      <i id="modelsBtn" class="fa-solid fa-cubes" title="Models"></i>
       <span id="gpuBadge" class="gpu-badge" title="Graphics backend">Detecting…</span>
     </div>
   </div>
@@ -766,6 +929,26 @@
       <input id="settingDirect" type="checkbox" />
     </div>
     <div class="setting-row">
+      <label for="settingParticles">Particles</label>
+      <input id="settingParticles" type="checkbox" />
+    </div>
+    <div class="setting-row">
+      <label for="settingParticleCount">Particle count</label>
+      <input id="settingParticleCount" type="number" min="0" max="5000" step="100" value="600" />
+    </div>
+    <div class="setting-row">
+      <label for="settingModelEffects">Model effects</label>
+      <input id="settingModelEffects" type="checkbox" />
+    </div>
+    <div class="setting-row">
+      <label for="settingModelOnly">Model only</label>
+      <input id="settingModelOnly" type="checkbox" />
+    </div>
+    <div class="setting-row">
+      <label for="settingMonitor">Monitor audio (hear output)</label>
+      <input id="settingMonitor" type="checkbox" checked />
+    </div>
+    <div class="setting-row">
       <label for="settingOffsetRange">Sync offset (ms)</label>
       <input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" />
       <input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" />
@@ -813,6 +996,33 @@
       </div>
       <div class="modal-actions">
         <button class="btn" onclick="document.getElementById('aboutModal').classList.remove('open')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Models Modal -->
+  <div id="modelsModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <h3>Models</h3>
+      <div class="row">
+        <label for="modelsCategory">Category</label>
+        <select id="modelsCategory" style="min-width: 180px;"></select>
+      </div>
+      <div class="row">
+        <label for="modelsSample">Sample every (vertices)</label>
+        <input id="modelsSample" type="number" min="1" max="16" step="1" value="3" />
+      </div>
+      <div class="row">
+        <label for="modelsBlend">Blend time (sec)</label>
+        <input id="modelsBlend" type="number" min="0" max="10" step="0.1" value="1.5" />
+      </div>
+      <div class="row">
+        <label for="modelsPreload">Save as preload</label>
+        <input id="modelsPreload" type="checkbox" />
+      </div>
+      <div id="modelsList" class="models-grid"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="document.getElementById('modelsModal').classList.remove('open')">Close</button>
       </div>
     </div>
   </div>

@@ -1,0 +1,39 @@
+{
+  "human": [
+    {
+      "name": "male02",
+      "file": "assets/models/human/male02.obj"
+    },
+    {
+      "name": "female02",
+      "file": "assets/models/human/female02.obj"
+    }
+  ],
+  "animals": [
+    {
+      "name": "cow",
+      "file": "assets/models/animals/cow.obj"
+    }
+  ],
+  "alpha_predators": [],
+  "fantasy": [
+    {
+      "name": "cerberus",
+      "file": "assets/models/fantasy/cerberus.obj"
+    },
+    {
+      "name": "armadillo",
+      "file": "assets/models/fantasy/armadillo.obj"
+    }
+  ],
+  "supernatural": [
+    {
+      "name": "walt_head",
+      "file": "assets/models/supernatural/walt_head.obj"
+    },
+    {
+      "name": "armadillo",
+      "file": "assets/models/supernatural/armadillo.obj"
+    }
+  ]
+}
