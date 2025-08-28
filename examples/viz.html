@@ -197,6 +197,59 @@
       }
     }
 
+    function currentBackendPref() {
+      const sel = document.getElementById('settingBackend');
+      return sel ? sel.value : (localStorage.getItem('backendPref') || 'auto');
+    }
+
+    function currentDirectPref() {
+      const el = document.getElementById('settingDirect');
+      if (el) return !!el.checked;
+      const stored = localStorage.getItem('directDraw');
+      return stored ? stored === '1' : false;
+    }
+
+    function reinitVisualizer() {
+      const backendPref = currentBackendPref();
+      const direct = currentDirectPref();
+      localStorage.setItem('backendPref', backendPref);
+      localStorage.setItem('directDraw', direct ? '1' : '0');
+
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const backend = backendPref === 'webgpu-exp' ? 'webgpu' : backendPref;
+
+      // Stop current renderer loop
+      const wasRendering = rendering;
+      stopRenderer();
+
+      try { visualizer?.loseGLContext?.(); } catch(_) {}
+      visualizer = butterchurn.createVisualizer(audioContext, canvas, {
+        width,
+        height,
+        pixelRatio: window.devicePixelRatio || 1,
+        textureRatio: 1,
+        backend,
+        directCanvas: direct
+      });
+
+      // Reconnect audio tap if present
+      if (tapNode) {
+        try { visualizer.connectAudio(tapNode); } catch(_) {}
+      }
+      // Reload current preset
+      try {
+        if (presetKeys.length) visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
+      } catch (e) {
+        console.error('Failed to load preset after reinit', e);
+        showToast('Failed to apply backend change', true);
+      }
+
+      if (wasRendering) startRenderer();
+      announce('Graphics backend updated');
+    }
+
     function showBusy(state, label = 'Working…') {
       busy.setAttribute('aria-hidden', state ? 'false' : 'true');
       busy.style.opacity = state ? '1' : '0';
@@ -293,11 +346,18 @@
       presetKeys = _.keys(presets);
       presetIndex = Math.floor(Math.random() * presetKeys.length);
 
+      // Apply stored backend prefs
+      const backendPref = localStorage.getItem('backendPref') || 'auto';
+      const direct = (localStorage.getItem('directDraw') || '0') === '1';
+      const backend = backendPref === 'webgpu-exp' ? 'webgpu' : backendPref;
+
       visualizer = butterchurn.createVisualizer(audioContext, canvas, {
         width: 800,
         height: 600,
         pixelRatio: window.devicePixelRatio || 1,
-        textureRatio: 1
+        textureRatio: 1,
+        backend,
+        directCanvas: direct
       });
       try {
         visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
@@ -395,6 +455,20 @@
         }
       });
 
+      // Backend controls
+      const backendSel = document.getElementById('settingBackend');
+      const directCb = document.getElementById('settingDirect');
+      if (backendSel) {
+        const stored = localStorage.getItem('backendPref') || 'auto';
+        backendSel.value = stored;
+        backendSel.addEventListener('change', () => { reinitVisualizer(); });
+      }
+      if (directCb) {
+        const storedD = (localStorage.getItem('directDraw') || '0') === '1';
+        directCb.checked = storedD;
+        directCb.addEventListener('change', () => { reinitVisualizer(); });
+      }
+
       // Sync offset controls
       const offsetRange = document.getElementById('settingOffsetRange');
       const offsetNum = document.getElementById('settingOffsetNum');
@@ -440,10 +514,10 @@
 
   <style>
     :root {
-      --bar-bg: #1a1d4b;
-      --bar-fg: #e8e6ff;
-      --bar-fg-dim: #c9c7f5;
-      --accent: #ffd76a;
+      --bar-bg: #0f1115; /* darker, angular Cybertruck vibe */
+      --bar-fg: #e5ecf5;
+      --bar-fg-dim: #b7c2d4;
+      --accent: #c0ff33; /* cyber green accent */
     }
 
     html, body {
@@ -465,6 +539,7 @@
       justify-content: space-between;
       padding: 10px 16px;
       z-index: 5;
+      box-shadow: 0 2px 0 rgba(255,255,255,0.06) inset, 0 -2px 0 rgba(255,255,255,0.06) inset;
     }
 
     #topbar { top: 0; height: 56px; }
@@ -482,7 +557,7 @@
       width: 36px;
       height: 36px;
       border: 3px solid var(--accent);
-      border-radius: 50%;
+      border-radius: 4px; /* angular */
       display: grid;
       place-items: center;
       color: var(--accent);
@@ -507,13 +582,14 @@
     .btn {
       width: 44px;
       height: 44px;
-      border-radius: 8px;
+      border-radius: 4px; /* angular */
       background: rgba(255,255,255,0.06);
       color: var(--bar-fg);
       border: 0;
       display: grid;
       place-items: center;
       cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.08);
     }
     .btn:active { transform: translateY(1px); }
     .btn i { font-size: 18px; }
@@ -611,7 +687,7 @@
     /* Modal */
     .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(4,6,18,0.55); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 12; }
     .modal.open { opacity: 1; pointer-events: auto; }
-    .modal-card { width: min(92vw, 520px); background: rgba(18,20,54,0.98); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px; color: var(--bar-fg); }
+    .modal-card { width: min(92vw, 520px); background: rgba(18,20,30,0.98); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px; color: var(--bar-fg); }
     .modal-card h3 { margin: 6px 0 12px; font-size: 18px; }
     .modal-actions { display:flex; justify-content:flex-end; gap: 8px; margin-top: 14px; }
     .chip { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); margin-right: 8px; font-size: 12px; }
@@ -676,6 +752,18 @@
     <div class="setting-row">
       <label for="settingRandom">Random order</label>
       <input id="settingRandom" type="checkbox" checked />
+    </div>
+    <div class="setting-row">
+      <label for="settingBackend">Graphics backend</label>
+      <select id="settingBackend">
+        <option value="auto">Auto</option>
+        <option value="webgl2">WebGL2</option>
+        <option value="webgpu-exp">WebGPU (experimental)</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <label for="settingDirect">Direct draw (no copy)</label>
+      <input id="settingDirect" type="checkbox" />
     </div>
     <div class="setting-row">
       <label for="settingOffsetRange">Sync offset (ms)</label>
