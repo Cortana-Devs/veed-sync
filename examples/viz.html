@@ -85,7 +85,7 @@
               showToast(`Loaded model: ${it.name}`);
             } catch (e) {
               console.error('Failed to load model', e);
-              showToast('Failed to load model', true);
+              showToast(`Model load failed: ${e?.message || 'error'}`, true);
             }
           });
           list.appendChild(div);

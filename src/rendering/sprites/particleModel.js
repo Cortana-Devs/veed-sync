@@ -95,16 +95,23 @@ export default class ParticleModel {
   }
 
   async loadOBJFromURL(url, sampleEvery = 4) {
-    const res = await fetch(url, { cache: 'force-cache' });
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) {
+      throw new Error(`Model fetch failed (${res.status}): ${url}`);
+    }
     const text = await res.text();
     return this.loadOBJFromString(text, sampleEvery);
   }
 
   loadOBJFromString(text, sampleEvery = 4) {
-    const verts = parseOBJToPoints(text, sampleEvery);
+    const step = Math.max(1, sampleEvery | 0);
+    const verts = parseOBJToPoints(text, step);
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.posBuf);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, verts, this.gl.STATIC_DRAW);
     this.count = verts.length / 3;
+    if (!Number.isFinite(this.count) || this.count <= 0) {
+      throw new Error('Model contains no vertices after parsing');
+    }
   }
 
   draw(dt, alphaOverride) {
