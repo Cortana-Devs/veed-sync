@@ -1,6 +1,7 @@
 import { loadModule } from "eel-wasm";
 import ascLoader from "@assemblyscript/loader";
 import AudioProcessor from "./audio/audioProcessor";
+import BeatSync from "./audio/beatSync";
 import Renderer from "./rendering/renderer";
 import Utils from "./utils";
 import loadPresetFunctionsBuffer from "./assemblyscript/presetFunctions.ts";
@@ -18,6 +19,7 @@ export default class Visualizer {
     this.rng = initializeRNG(opts);
     this.deterministicMode = opts.deterministic || opts.testMode;
     this.audio = new AudioProcessor(audioContext);
+    this.beatSync = new BeatSync({ expectedBpm: (opts && opts.bpm) || 120, meter: (opts && opts.meter) || 4 });
 
     const vizWidth = opts.width || 1200;
     const vizHeight = opts.height || 900;
@@ -295,6 +297,7 @@ export default class Visualizer {
     ];
 
     this.renderer = new Renderer(this.gl, this.audio, opts);
+    if (this.renderer && this.renderer.setBeatSync) this.renderer.setBeatSync(this.beatSync);
   }
 
   loseGLContext() {

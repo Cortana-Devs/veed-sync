@@ -25,6 +25,7 @@ export default class Renderer {
   constructor(gl, audio, opts) {
     this.gl = gl;
     this.audio = audio;
+    this.beatSync = null;
 
     this.frameNum = 0;
     this.fps = 30;
@@ -942,6 +943,15 @@ export default class Renderer {
     }
     this.audioLevels.updateAudioLevels(this.fps, this.frameNum);
 
+    // Update beat sync using mixed spectrum (mono)
+    if (this.audio && this.audio.freqArray) {
+      const dt = elapsedTime || 1 / Math.max(24, Math.round(this.fps) || 30);
+      const spec = this.audio.freqArrayL || this.audio.freqArray || null;
+      if (this.beatSync && spec) {
+        this.beatState = this.beatSync.update(dt, spec);
+      }
+    }
+
     const globalVars = {
       frame: this.frameNum,
       time: this.time,
@@ -968,6 +978,22 @@ export default class Renderer {
     if (!this.preset.useWASM) {
       globalVars.gmegabuf = this.presetEquationRunner.gmegabuf;
       Object.assign(globalVars, this.regVars);
+    }
+
+    // Provide beat info to preset globals for equations
+    if (!globalVars.gmegabuf) globalVars.gmegabuf = this.presetEquationRunner.gmegabuf || {};
+    if (this.beatState) {
+      globalVars.beat_phase = this.beatState.phase;
+      globalVars.bar_phase = this.beatState.barPhase;
+      globalVars.onbeat = this.beatState.onBeat ? 1 : 0;
+      globalVars.bpm = this.beatState.bpm;
+      globalVars.beat_conf = this.beatState.confidence;
+    } else {
+      globalVars.beat_phase = 0;
+      globalVars.bar_phase = 0;
+      globalVars.onbeat = 0;
+      globalVars.bpm = 120;
+      globalVars.beat_conf = 0;
     }
 
     const mdVSFrame = this.presetEquationRunner.runFrameEquations(globalVars);
@@ -1127,7 +1153,8 @@ export default class Renderer {
       const energyDelta = energy - this.energyEMA;
       const now = this.time;
       const canTrigger = (now - this.lastShotTime) > 1.2; // cooldown
-      if (energyDelta > 0.18 && canTrigger) {
+      const beatHit = this.beatState?.onBeat && (this.beatState?.confidence || 0) > 0.2;
+      if ((energyDelta > 0.18 || beatHit) && canTrigger) {
         this._startCameraShot(energy);
         this.lastShotTime = now;
       }
@@ -1160,7 +1187,8 @@ export default class Renderer {
       }
 
       // Slight side dolly for shot variety
-      const side = 0.10 * Math.sin(this.time * 0.35);
+      const beatWobble = this.beatState ? (0.08 * Math.sin(this.beatState.phase * Math.PI * 2)) : 0.0;
+      const side = 0.10 * Math.sin(this.time * 0.35) + beatWobble;
       this.particleModel.setCamera({ eye: [side, eye[1], eye[2]], target: [0, faceY, 0], fov, aspect });
       this.particles.configure({ pointSize: Math.max(2.0, 5.0 * energy), speed: 1.0 + energy });
 
@@ -1478,6 +1506,11 @@ export default class Renderer {
   // Update cinematic post-processing parameters
   setPostFX(partial = {}) {
     this.postFX = Object.assign({}, this.postFX, partial);
+  }
+
+  // Inject beat synchronizer
+  setBeatSync(instance) {
+    this.beatSync = instance || null;
   }
 
   // ---- Audio responsiveness controls ----
