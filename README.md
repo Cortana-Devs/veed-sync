@@ -1,4 +1,4 @@
-# Butterchurn
+# Veed-Sync
 
 Butterchurn is a WebGL implementation of the Milkdrop Visualizer
 
