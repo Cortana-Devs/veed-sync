@@ -151,10 +151,21 @@ export default class Renderer {
     this.cameraShotActive = false;
     this.cameraShotT = 0;
     this.cameraShotDuration = 1.2;
-    this.cameraShotFrom = { eye: [0, 0.6, 3.0], fov: 50 * Math.PI / 180 };
-    this.cameraShotTo = { eye: [0, 0.6, 2.4], fov: 45 * Math.PI / 180 };
+    this.cameraShotFrom = { eye: [0, 0.6, 2.8], fov: 48 * Math.PI / 180 };
+    this.cameraShotTo = { eye: [0, 0.62, 2.1], fov: 40 * Math.PI / 180 };
     this.lastShotTime = -5;
     this.energyEMA = 0;
+
+    // Post FX defaults
+    this.postFX = {
+      exposure: 0.0,      // stops
+      tonemap: 0.0,       // 0..1
+      saturation: 0.0,    // -1..+1
+      contrast: 0.0,      // -1..+1
+      vignette: 0.0,      // 0..1
+      grain: 0.0,         // 0..1
+      grainLuma: 0.75,    // 0..1
+    };
 
     this.supertext = {
       startTime: -1,
@@ -207,14 +218,16 @@ export default class Renderer {
   _startCameraShot(energy) {
     this.cameraShotActive = true;
     this.cameraShotT = 0;
-    // from current base eye
-    const baseZ = 3.0 - 0.25 * energy;
-    const baseY = 0.6 + 0.15 * Math.sin(this.time * 0.6);
-    this.cameraShotFrom = { eye: [0, baseY, baseZ], fov: 50 * Math.PI / 180 };
-    // Target a closer over-shoulder zoom and slight tilt via Y
-    const targetZ = Math.max(1.8, baseZ - 0.7);
-    const targetY = baseY + 0.08;
-    const targetFov = 42 * Math.PI / 180;
+    // from current base eye at face level
+    const framing = this.particleModel.getFramingInfo();
+    const faceY = framing.faceY || 0.5;
+    const baseZ = 2.4 - 0.35 * energy;
+    const baseY = faceY + 0.06 + 0.08 * Math.sin(this.time * 0.45);
+    this.cameraShotFrom = { eye: [0, baseY, baseZ], fov: 46 * Math.PI / 180 };
+    // Target a close-up zoom towards the face
+    const targetZ = Math.max(1.8, baseZ - 0.55);
+    const targetY = faceY + 0.04;
+    const targetFov = 40 * Math.PI / 180;
     this.cameraShotTo = { eye: [0.0, targetY, targetZ], fov: targetFov };
     this.cameraShotDuration = 0.9 + 0.6 * (1.0 - energy); // shorter on strong beats
   }
@@ -1072,10 +1085,15 @@ export default class Renderer {
       }
 
       // Base cinematic camera (idle dolly)
-      const baseEyeZ = 3.0 - 0.25 * energy;
-      const baseEyeY = 0.6 + 0.15 * Math.sin(this.time * 0.6);
+      // Face-level cinematic framing
+      const framing = this.particleModel.getFramingInfo();
+      const faceY = framing.faceY || 0.5;
+      const baseEyeZ = 2.4 - 0.35 * energy; // closer for portrait
+      const baseEyeY = faceY + 0.06 + 0.08 * Math.sin(this.time * 0.45);
       let eye = [0.0, baseEyeY, baseEyeZ];
-      let fov = 50 * Math.PI / 180;
+      // Slightly wider angle on wide screens to fill frame
+      const aspect = this.width / this.height;
+      let fov = (aspect >= 1.7 ? 46 : 50) * Math.PI / 180;
 
       // Apply active shot blending
       if (this.cameraShotActive) {
@@ -1093,7 +1111,9 @@ export default class Renderer {
         fov = this._mix(this.cameraShotFrom.fov, this.cameraShotTo.fov, t);
       }
 
-      this.particleModel.setCamera({ eye, fov, aspect: this.width / this.height });
+      // Slight side dolly for shot variety
+      const side = 0.10 * Math.sin(this.time * 0.35);
+      this.particleModel.setCamera({ eye: [side, eye[1], eye[2]], target: [0, faceY, 0], fov, aspect });
       this.particles.configure({ pointSize: Math.max(2.0, 5.0 * energy), speed: 1.0 + energy });
 
       // Transition mix between previous and current models
@@ -1257,7 +1277,8 @@ export default class Renderer {
         blurMaxs,
         this.mdVSFrame,
         this.presetEquationRunner.mdVSQAfterFrame,
-        this.warpColor
+        this.warpColor,
+        this.postFX
       );
     } else {
       this.prevCompShader.renderQuadTexture(
@@ -1270,7 +1291,8 @@ export default class Renderer {
         blurMaxs,
         this.prevMDVSFrame,
         this.prevPresetEquationRunner.mdVSQAfterFrame,
-        this.warpColor
+        this.warpColor,
+        this.postFX
       );
 
       this.compShader.renderQuadTexture(
@@ -1283,7 +1305,8 @@ export default class Renderer {
         blurMaxs,
         this.mdVSFrameMixed,
         this.presetEquationRunner.mdVSQAfterFrame,
-        this.warpColor
+        this.warpColor,
+        this.postFX
       );
     }
 
@@ -1368,7 +1391,8 @@ export default class Renderer {
       blurMaxs,
       this.mdVSFrame,
       this.presetEquationRunner.mdVSQAfterFrame,
-      this.warpColor
+      this.warpColor,
+      this.postFX
     );
 
     this.gl.readPixels(
@@ -1401,6 +1425,11 @@ export default class Renderer {
     this.gl.deleteFramebuffer(compFrameBuffer);
 
     return canvas.toDataURL();
+  }
+
+  // Update cinematic post-processing parameters
+  setPostFX(partial = {}) {
+    this.postFX = Object.assign({}, this.postFX, partial);
   }
 
   warpBufferToDataURL() {

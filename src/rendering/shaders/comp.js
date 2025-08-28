@@ -266,6 +266,15 @@ export default class CompShader {
       uniform vec4 texsize_noisevol_lq;
       uniform vec4 texsize_noisevol_hq;
 
+      // Post FX uniforms (default to 0.0 when not bound)
+      uniform float post_exposure;     // stops, negative to darken
+      uniform float post_tonemap;      // 0..1 mix to ACES tonemap
+      uniform float post_saturation;   // -1..+1 range
+      uniform float post_contrast;     // -1..+1 range
+      uniform float post_vignette;     // 0..1
+      uniform float post_grain;        // 0..1
+      uniform float post_grain_luma;   // 0..1 (apply more grain to shadows)
+
       uniform float bass;
       uniform float mid;
       uniform float treb;
@@ -348,6 +357,14 @@ export default class CompShader {
 
       ${fragShaderHeaderText}
 
+      // --- Post FX helpers ---
+      vec3 acesTonemap(vec3 x){
+        // ACES fitted curve (approx)
+        return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0);
+      }
+
+      float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
       void main(void) {
         vec3 ret;
         vec2 uv = vUv;
@@ -360,7 +377,42 @@ export default class CompShader {
 
         ${fragShaderText}
 
-        fragColor = vec4(ret, vColor.a);
+        // Apply cinematic post FX
+        vec3 color = ret;
+
+        // Exposure + optional ACES tonemap
+        float exposureMul = exp2(post_exposure);
+        vec3 exposed = color * exposureMul;
+        vec3 toned = acesTonemap(exposed);
+        color = mix(color, toned, clamp(post_tonemap, 0.0, 1.0));
+
+        // Saturation
+        float Y = luma(color);
+        float satAmt = clamp(1.0 + post_saturation, 0.0, 2.0);
+        color = mix(vec3(Y), color, satAmt);
+
+        // Contrast
+        float ctr = clamp(1.0 + post_contrast, 0.0, 2.0);
+        color = (color - 0.5) * ctr + 0.5;
+
+        // Vignette
+        if (post_vignette > 0.0) {
+          vec2 p = (uv - 0.5) * vec2(aspect.x, aspect.y) * 1.2;
+          float v = smoothstep(0.6, 1.2, length(p));
+          color *= (1.0 - post_vignette * v);
+        }
+
+        // Film grain using bound noise texture
+        if (post_grain > 0.0) {
+          vec2 noiseUv = vUv * (texsize.xy * 0.3) + vec2(time*13.37, time*7.91);
+          float n = texture(sampler_noise_lq, noiseUv).r * 2.0 - 1.0;
+          float yl = luma(color);
+          float lumaMask = mix(1.0, 1.0 - yl, clamp(post_grain_luma, 0.0, 1.0));
+          color += n * (0.04 * post_grain) * lumaMask;
+        }
+
+        color = clamp(color, 0.0, 1.0);
+        fragColor = vec4(color, vColor.a);
       }
       `.trim()
     );
@@ -551,6 +603,36 @@ export default class CompShader {
     );
     this.fShaderLoc = this.gl.getUniformLocation(this.shaderProgram, "fShader");
 
+    // Post FX uniform locations
+    this.postExposureLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_exposure"
+    );
+    this.postTonemapLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_tonemap"
+    );
+    this.postSaturationLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_saturation"
+    );
+    this.postContrastLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_contrast"
+    );
+    this.postVignetteLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_vignette"
+    );
+    this.postGrainLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_grain"
+    );
+    this.postGrainLumaLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_grain_luma"
+    );
+
     this.qaLoc = this.gl.getUniformLocation(this.shaderProgram, "_qa");
     this.qbLoc = this.gl.getUniformLocation(this.shaderProgram, "_qb");
     this.qcLoc = this.gl.getUniformLocation(this.shaderProgram, "_qc");
@@ -732,7 +814,8 @@ export default class CompShader {
     blurMaxs,
     mdVSFrame,
     mdVSQs,
-    warpColor
+    warpColor,
+    postFX
   ) {
     const compColors = this.generateCompColors(blending, mdVSFrame, warpColor);
 
@@ -922,6 +1005,23 @@ export default class CompShader {
       ])
     );
     this.gl.uniform1f(this.fShaderLoc, mdVSFrame.fshader);
+
+    // Bind Post FX uniforms (with safe defaults)
+    const fx = postFX || {};
+    const _exp = (mdVSFrame.post_exposure != null) ? mdVSFrame.post_exposure : (fx.exposure != null ? fx.exposure : 0.0);
+    const _tm = (mdVSFrame.post_tonemap != null) ? mdVSFrame.post_tonemap : (fx.tonemap != null ? fx.tonemap : 0.0);
+    const _sat = (mdVSFrame.post_saturation != null) ? mdVSFrame.post_saturation : (fx.saturation != null ? fx.saturation : 0.0);
+    const _con = (mdVSFrame.post_contrast != null) ? mdVSFrame.post_contrast : (fx.contrast != null ? fx.contrast : 0.0);
+    const _vig = (mdVSFrame.post_vignette != null) ? mdVSFrame.post_vignette : (fx.vignette != null ? fx.vignette : 0.0);
+    const _grn = (mdVSFrame.post_grain != null) ? mdVSFrame.post_grain : (fx.grain != null ? fx.grain : 0.0);
+    const _grl = (mdVSFrame.post_grain_luma != null) ? mdVSFrame.post_grain_luma : (fx.grainLuma != null ? fx.grainLuma : 0.75);
+    this.gl.uniform1f(this.postExposureLoc, _exp);
+    this.gl.uniform1f(this.postTonemapLoc, _tm);
+    this.gl.uniform1f(this.postSaturationLoc, _sat);
+    this.gl.uniform1f(this.postContrastLoc, _con);
+    this.gl.uniform1f(this.postVignetteLoc, _vig);
+    this.gl.uniform1f(this.postGrainLoc, _grn);
+    this.gl.uniform1f(this.postGrainLumaLoc, _grl);
 
     this.gl.uniform4fv(
       this.qaLoc,
