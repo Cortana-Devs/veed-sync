@@ -591,6 +591,7 @@
       const fxShakeFreq = document.getElementById('fxShakeFreq');
       const fxShakeZoom = document.getElementById('fxShakeZoom');
       const fxBounceFreq = document.getElementById('fxBounceFreq');
+      const reduceMotionCb = document.getElementById('settingReduceMotion');
 
       const applyFx = _.throttle(() => {
         if (!visualizer) return;
@@ -613,10 +614,59 @@
         const bars = Math.max(1, parseInt(fxVibeBars?.value || '4', 10));
         visualizer.renderer?.setQuantizedTransitions?.(!!fxQuant?.checked, bars);
         visualizer.renderer?.enableAutoVibes?.(!!fxAutoVibe?.checked, bars);
+
+        // Persist
+        try {
+          localStorage.setItem('fxBloom', fxBloom?.checked ? '1' : '0');
+          localStorage.setItem('fxBloomStrength', String(fxBloomStrength?.value || '0.4'));
+          localStorage.setItem('fxBassShake', fxBassShake?.checked ? '1' : '0');
+          localStorage.setItem('fxShakeFreq', String(fxShakeFreq?.value || '2.5'));
+          localStorage.setItem('fxShakeZoom', String(fxShakeZoom?.value || '0.06'));
+          localStorage.setItem('fxZoomBounce', fxZoomBounce?.checked ? '1' : '0');
+          localStorage.setItem('fxBounceFreq', String(fxBounceFreq?.value || '1.6'));
+          localStorage.setItem('fxQuantize', fxQuant?.checked ? '1' : '0');
+          localStorage.setItem('fxAutoVibe', fxAutoVibe?.checked ? '1' : '0');
+          localStorage.setItem('fxVibeBars', String(fxVibeBars?.value || '4'));
+        } catch(_) {}
       }, 100);
 
       [fxBloom, fxBassShake, fxZoomBounce, fxQuant, fxAutoVibe, fxVibeBars, fxBloomStrength, fxShakeFreq, fxShakeZoom, fxBounceFreq]
         .forEach((el) => el && el.addEventListener('change', applyFx));
+
+      // Restore persisted FX values
+      try {
+        if (fxBloom) fxBloom.checked = (localStorage.getItem('fxBloom') || '1') === '1';
+        if (fxBloomStrength) fxBloomStrength.value = String(localStorage.getItem('fxBloomStrength') || '0.4');
+        if (fxBassShake) fxBassShake.checked = (localStorage.getItem('fxBassShake') || '1') === '1';
+        if (fxShakeFreq) fxShakeFreq.value = String(localStorage.getItem('fxShakeFreq') || '2.5');
+        if (fxShakeZoom) fxShakeZoom.value = String(localStorage.getItem('fxShakeZoom') || '0.06');
+        if (fxZoomBounce) fxZoomBounce.checked = (localStorage.getItem('fxZoomBounce') || '1') === '1';
+        if (fxBounceFreq) fxBounceFreq.value = String(localStorage.getItem('fxBounceFreq') || '1.6');
+        if (fxQuant) fxQuant.checked = (localStorage.getItem('fxQuantize') || '1') === '1';
+        if (fxAutoVibe) fxAutoVibe.checked = (localStorage.getItem('fxAutoVibe') || '1') === '1';
+        if (fxVibeBars) fxVibeBars.value = String(localStorage.getItem('fxVibeBars') || '4');
+      } catch(_) {}
+
+      // Reduce motion handling
+      if (reduceMotionCb) {
+        const storedRM = (localStorage.getItem('reduceMotion') || '0') === '1';
+        reduceMotionCb.checked = storedRM;
+        const applyReduceMotion = (enabled) => {
+          if (!visualizer?.renderer) return;
+          if (enabled) {
+            if (fxBassShake) fxBassShake.checked = false;
+            if (fxZoomBounce) fxZoomBounce.checked = false;
+            visualizer.renderer.setPostFX?.({ bassShake: 0, zoomBounce: 0 });
+          }
+          try { localStorage.setItem('reduceMotion', enabled ? '1' : '0'); } catch(_) {}
+          applyFx();
+          showToast(`Reduce motion ${enabled ? 'enabled' : 'disabled'}`);
+        };
+        reduceMotionCb.addEventListener('change', (e) => applyReduceMotion(!!e.target.checked));
+        if (storedRM) applyReduceMotion(true); else applyFx();
+      } else {
+        applyFx();
+      }
 
 
       document.getElementById('settingCycle').addEventListener('change', (e) => {
@@ -793,18 +843,21 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
 
+    /* Liquid glass bars */
     #topbar, #bottombar {
       position: fixed;
       left: 0;
       right: 0;
-      background: var(--bar-bg);
+      background: linear-gradient(135deg, rgba(18,20,54,0.55), rgba(10,12,36,0.45));
+      backdrop-filter: blur(12px) saturate(120%);
+      -webkit-backdrop-filter: blur(12px) saturate(120%);
       color: var(--bar-fg);
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 16px;
       z-index: 5;
-      box-shadow: 0 2px 0 rgba(255,255,255,0.06) inset, 0 -2px 0 rgba(255,255,255,0.06) inset;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 -1px 0 rgba(255,255,255,0.06) inset, 0 8px 24px rgba(0,0,0,0.25);
     }
 
     #topbar { top: 0; height: 56px; }
@@ -902,11 +955,14 @@
     }
 
     /* Panels */
+    /* Liquid glass panels */
     #settingsPanel, #playlistPanel {
       position: fixed;
       bottom: 80px;
       right: 16px;
-      background: rgba(18, 20, 54, 0.98);
+      background: linear-gradient(135deg, rgba(22,26,68,0.52), rgba(14,16,42,0.46));
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px;
       padding: 16px;
@@ -936,12 +992,12 @@
     #busy {
       position: fixed; inset: 56px 0 70px 0; display: grid; place-items: center; background: rgba(8,9,24,0.35); color: var(--bar-fg); z-index: 9; opacity: 0; transition: opacity .2s ease; pointer-events: none;
     }
-    .busy-card { background: rgba(18,20,54,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+    .busy-card { background: linear-gradient(135deg, rgba(18,20,54,0.70), rgba(10,12,36,0.64)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
     .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Toast */
-    #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: rgba(38,41,94,0.98); color: var(--bar-fg); padding: 10px 14px; border-radius: 10px; opacity: 0; transition: opacity .15s ease, transform .15s ease; pointer-events: none; z-index: 11; }
+    #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: linear-gradient(135deg, rgba(38,41,94,0.82), rgba(28,31,74,0.78)); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--bar-fg); padding: 10px 14px; border-radius: 12px; opacity: 0; transition: opacity .15s ease, transform .15s ease; pointer-events: none; z-index: 11; border: 1px solid rgba(255,255,255,0.10); }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
     #toast.error { background: rgba(160,30,30,0.95); }
 
@@ -1088,6 +1144,10 @@
       <label for="settingOffsetRange">Sync offset (ms)</label>
       <input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" />
       <input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" />
+    </div>
+    <div class="setting-row">
+      <label for="settingReduceMotion">Reduce motion</label>
+      <input id="settingReduceMotion" type="checkbox" />
     </div>
   </div>
 
