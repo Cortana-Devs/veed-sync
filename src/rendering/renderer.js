@@ -165,7 +165,55 @@ export default class Renderer {
       vignette: 0.0,      // 0..1
       grain: 0.0,         // 0..1
       grainLuma: 0.75,    // 0..1
+      tint: [1.0, 1.0, 1.0],
     };
+
+    // Vibe presets
+    this._vibes = [
+      {
+        key: "sunset_beach",
+        label: "Sunset Beach",
+        postFX: {
+          exposure: 0.25,
+          tonemap: 1.0,
+          saturation: 0.18,
+          contrast: 0.08,
+          vignette: 0.22,
+          grain: 0.25,
+          grainLuma: 0.85,
+          tint: [1.06, 0.95, 0.88],
+        },
+      },
+      {
+        key: "neon_city",
+        label: "Neon City",
+        postFX: {
+          exposure: 0.15,
+          tonemap: 0.8,
+          saturation: 0.35,
+          contrast: 0.18,
+          vignette: 0.28,
+          grain: 0.18,
+          grainLuma: 0.6,
+          tint: [0.9, 1.05, 1.1],
+        },
+      },
+      {
+        key: "nature_doc",
+        label: "Nature Documentary",
+        postFX: {
+          exposure: 0.0,
+          tonemap: 1.0,
+          saturation: -0.05,
+          contrast: -0.02,
+          vignette: 0.08,
+          grain: 0.12,
+          grainLuma: 1.0,
+          tint: [1.0, 1.0, 1.0],
+        },
+      },
+    ];
+    this._vibeIndex = 0;
 
     this.supertext = {
       startTime: -1,
@@ -1430,6 +1478,32 @@ export default class Renderer {
   // Update cinematic post-processing parameters
   setPostFX(partial = {}) {
     this.postFX = Object.assign({}, this.postFX, partial);
+  }
+
+  // Quick vibe controls
+  applyVibe(keyOrIndex) {
+    let idx = -1;
+    if (typeof keyOrIndex === "number") {
+      idx = Math.max(0, Math.min(this._vibes.length - 1, keyOrIndex));
+    } else if (typeof keyOrIndex === "string") {
+      idx = this._vibes.findIndex((v) => v.key === keyOrIndex);
+      if (idx < 0) idx = 0;
+    } else {
+      idx = this._vibeIndex;
+    }
+    this._vibeIndex = idx;
+    this.setPostFX(this._vibes[idx].postFX);
+    return this._vibes[idx];
+  }
+
+  cycleVibes(step = 1) {
+    this._vibeIndex = (this._vibeIndex + step + this._vibes.length) % this._vibes.length;
+    this.setPostFX(this._vibes[this._vibeIndex].postFX);
+    return this._vibes[this._vibeIndex];
+  }
+
+  getCurrentVibe() {
+    return { index: this._vibeIndex, ...this._vibes[this._vibeIndex] };
   }
 
   warpBufferToDataURL() {

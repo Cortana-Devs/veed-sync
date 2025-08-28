@@ -274,6 +274,7 @@ export default class CompShader {
       uniform float post_vignette;     // 0..1
       uniform float post_grain;        // 0..1
       uniform float post_grain_luma;   // 0..1 (apply more grain to shadows)
+      uniform vec3 post_tint;          // rgb multiplier, default (1,1,1)
 
       uniform float bass;
       uniform float mid;
@@ -385,6 +386,9 @@ export default class CompShader {
         vec3 exposed = color * exposureMul;
         vec3 toned = acesTonemap(exposed);
         color = mix(color, toned, clamp(post_tonemap, 0.0, 1.0));
+
+        // Global tint
+        color *= clamp(post_tint, vec3(0.0), vec3(2.0));
 
         // Saturation
         float Y = luma(color);
@@ -631,6 +635,10 @@ export default class CompShader {
     this.postGrainLumaLoc = this.gl.getUniformLocation(
       this.shaderProgram,
       "post_grain_luma"
+    );
+    this.postTintLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_tint"
     );
 
     this.qaLoc = this.gl.getUniformLocation(this.shaderProgram, "_qa");
@@ -1022,6 +1030,8 @@ export default class CompShader {
     this.gl.uniform1f(this.postVignetteLoc, _vig);
     this.gl.uniform1f(this.postGrainLoc, _grn);
     this.gl.uniform1f(this.postGrainLumaLoc, _grl);
+    const _t = (mdVSFrame.post_tint != null) ? mdVSFrame.post_tint : (fx.tint != null ? fx.tint : [1.0,1.0,1.0]);
+    this.gl.uniform3fv(this.postTintLoc, new Float32Array(_t));
 
     this.gl.uniform4fv(
       this.qaLoc,
