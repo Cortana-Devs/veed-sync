@@ -1480,6 +1480,31 @@ export default class Renderer {
     this.postFX = Object.assign({}, this.postFX, partial);
   }
 
+  // ---- Audio responsiveness controls ----
+  setAudioResponse(cfg = {}) {
+    if (this.audioLevels && this.audioLevels.setResponse) {
+      this.audioLevels.setResponse(cfg);
+    }
+  }
+
+  setInputSensitivity(mult) {
+    if (this.audio && this.audio.setSensitivity) {
+      this.audio.setSensitivity(mult);
+    }
+  }
+
+  setAnalyserSmoothing(value) {
+    if (this.audio && this.audio.setAnalyserSmoothing) {
+      this.audio.setAnalyserSmoothing(value);
+    }
+  }
+
+  setTemporalSmoothing(value) {
+    if (this.audio && this.audio.setTemporalSmoothing) {
+      this.audio.setTemporalSmoothing(value);
+    }
+  }
+
   // Quick vibe controls
   applyVibe(keyOrIndex) {
     let idx = -1;

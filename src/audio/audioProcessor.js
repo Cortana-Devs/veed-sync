@@ -10,11 +10,16 @@ export default class AudioProcessor {
     if (context) {
       this.audioContext = context;
       this.audible = context.createDelay();
+      // Input gain for sensitivity control
+      this.inputGain = context.createGain();
+      this.inputGain.gain.value = 1.0;
 
       this.analyser = context.createAnalyser();
       this.analyser.smoothingTimeConstant = 0.0;
       this.analyser.fftSize = this.fftSize;
 
+      // Connect processing graph
+      this.inputGain.connect(this.audible);
       this.audible.connect(this.analyser);
 
       // Split channels
@@ -51,6 +56,9 @@ export default class AudioProcessor {
     // Undersampled from this.fftSize to this.numSamps
     this.timeArrayL = new Int8Array(this.numSamps);
     this.timeArrayR = new Int8Array(this.numSamps);
+
+    // User-adjustable smoothing (temporal pre-FFT)
+    this.temporalSmoothing = 0.5; // 0..1, 0 = follow last sample, 1 = follow current sample
   }
 
   sampleAudio() {
@@ -73,12 +81,10 @@ export default class AudioProcessor {
       this.timeByteArraySignedL[i] = this.timeByteArrayL[i] - 128;
       this.timeByteArraySignedR[i] = this.timeByteArrayR[i] - 128;
 
-      this.tempTimeArrayL[i] =
-        0.5 *
-        (this.timeByteArraySignedL[i] + this.timeByteArraySignedL[lastIdx]);
-      this.tempTimeArrayR[i] =
-        0.5 *
-        (this.timeByteArraySignedR[i] + this.timeByteArraySignedR[lastIdx]);
+      const a = this.temporalSmoothing;
+      const b = 1.0 - a;
+      this.tempTimeArrayL[i] = a * this.timeByteArraySignedL[i] + b * this.timeByteArraySignedL[lastIdx];
+      this.tempTimeArrayR[i] = a * this.timeByteArraySignedR[i] + b * this.timeByteArraySignedR[lastIdx];
 
       // Undersampled
       if (i % 2 === 0) {
@@ -97,11 +103,40 @@ export default class AudioProcessor {
   }
 
   connectAudio(audionode) {
-    audionode.connect(this.audible);
+    if (this.inputGain) {
+      audionode.connect(this.inputGain);
+    } else {
+      audionode.connect(this.audible);
+    }
   }
 
   disconnectAudio(audionode) {
-    audionode.disconnect(this.audible);
+    if (this.inputGain) {
+      audionode.disconnect(this.inputGain);
+    } else {
+      audionode.disconnect(this.audible);
+    }
+  }
+  
+  // Sensitivity (input gain)
+  setSensitivity(mult) {
+    if (this.inputGain && Number.isFinite(mult)) {
+      this.inputGain.gain.value = Math.max(0, mult);
+    }
+  }
+
+  // WebAudio analyser smoothing (0..1). Affects native analyser outputs.
+  setAnalyserSmoothing(value) {
+    const v = Math.min(0.99, Math.max(0.0, value || 0));
+    if (this.analyser) this.analyser.smoothingTimeConstant = v;
+    if (this.analyserL) this.analyserL.smoothingTimeConstant = v;
+    if (this.analyserR) this.analyserR.smoothingTimeConstant = v;
+  }
+
+  // Pre-FFT temporal smoothing of time-domain samples (0..1)
+  setTemporalSmoothing(value) {
+    const v = Math.min(1.0, Math.max(0.0, value || 0));
+    this.temporalSmoothing = v;
   }
   /* eslint-enable no-bitwise */
 }

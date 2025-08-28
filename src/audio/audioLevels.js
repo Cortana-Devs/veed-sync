@@ -44,6 +44,15 @@ export default class AudioLevels {
     this.att.fill(1);
     this.avg.fill(1);
     this.longAvg.fill(1);
+
+    // User-configurable response controls
+    this.response = {
+      gain: 1.0,              // scales band energy before normalization
+      attack: 0.2,            // 0..1 (faster upwards)
+      release: 0.5,           // 0..1 (faster downwards)
+      longAvgFast: 0.9,       // boot warm-up
+      longAvgSlow: 0.992,     // steady state
+    };
   }
 
   /* eslint-disable camelcase */
@@ -98,31 +107,37 @@ export default class AudioLevels {
       }
 
       for (let i = 0; i < 3; i++) {
-        let rate;
-        if (this.imm[i] > this.avg[i]) {
-          rate = 0.2;
-        } else {
-          rate = 0.5;
-        }
-        rate = AudioLevels.adjustRateToFPS(rate, 30.0, effectiveFPS);
-        this.avg[i] = this.avg[i] * rate + this.imm[i] * (1 - rate);
+        const gain = Math.max(0, this.response.gain || 1.0);
+        const immScaled = this.imm[i] * gain;
 
-        if (frame < 50) {
-          rate = 0.9;
-        } else {
-          rate = 0.992;
-        }
-        rate = AudioLevels.adjustRateToFPS(rate, 30.0, effectiveFPS);
-        this.longAvg[i] = this.longAvg[i] * rate + this.imm[i] * (1 - rate);
+        let rate;
+        const atk = AudioLevels.adjustRateToFPS(this.response.attack, 30.0, effectiveFPS);
+        const rel = AudioLevels.adjustRateToFPS(this.response.release, 30.0, effectiveFPS);
+        rate = immScaled > this.avg[i] ? atk : rel;
+        this.avg[i] = this.avg[i] * rate + immScaled * (1 - rate);
+
+        const warm = AudioLevels.adjustRateToFPS(this.response.longAvgFast, 30.0, effectiveFPS);
+        const steady = AudioLevels.adjustRateToFPS(this.response.longAvgSlow, 30.0, effectiveFPS);
+        const lr = frame < 50 ? warm : steady;
+        this.longAvg[i] = this.longAvg[i] * lr + immScaled * (1 - lr);
 
         if (this.longAvg[i] < 0.001) {
           this.val[i] = 1.0;
           this.att[i] = 1.0;
         } else {
-          this.val[i] = this.imm[i] / this.longAvg[i];
+          this.val[i] = immScaled / this.longAvg[i];
           this.att[i] = this.avg[i] / this.longAvg[i];
         }
       }
     }
+  }
+
+  // API: Adjust band response
+  setResponse({ gain, attack, release, longAvgFast, longAvgSlow } = {}) {
+    if (Number.isFinite(gain)) this.response.gain = Math.max(0, gain);
+    if (Number.isFinite(attack)) this.response.attack = Math.min(0.99, Math.max(0.0, attack));
+    if (Number.isFinite(release)) this.response.release = Math.min(0.99, Math.max(0.0, release));
+    if (Number.isFinite(longAvgFast)) this.response.longAvgFast = Math.min(0.999, Math.max(0.0, longAvgFast));
+    if (Number.isFinite(longAvgSlow)) this.response.longAvgSlow = Math.min(0.9999, Math.max(0.0, longAvgSlow));
   }
 }
