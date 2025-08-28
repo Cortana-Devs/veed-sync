@@ -851,7 +851,7 @@
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px;
       padding: 16px;
-      width: 320px;
+      width: clamp(280px, 38vw, 420px);
       max-height: 50vh;
       overflow: auto;
       transform: translateY(20px);
@@ -861,7 +861,7 @@
       z-index: 10;
       color: var(--bar-fg);
     }
-    #playlistPanel { right: 360px; width: 380px; }
+    #playlistPanel { right: 360px; width: clamp(320px, 48vw, 540px); }
     #settingsPanel.open, #playlistPanel.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
     #settingsPanel h4, #playlistPanel h4 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
 
@@ -902,6 +902,26 @@
     .models-grid { display:grid; grid-template-columns: 1fr; gap: 8px; max-height: 40vh; overflow:auto; }
     .model-item { padding: 8px 10px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; cursor:pointer; }
     .model-item:hover { background: rgba(255,255,255,0.06); }
+
+    /* Responsive adjustments */
+    @media (max-width: 840px) {
+      .btn { width: 40px; height: 40px; }
+      .bar-section { gap: 12px; }
+      #playlistPanel { right: 16px; }
+    }
+    @media (max-width: 640px) {
+      #settingsPanel, #playlistPanel {
+        left: 16px;
+        right: 16px;
+        width: auto;
+        max-height: 55vh;
+      }
+      .setting-row { gap: 10px; }
+      .setting-row label { font-size: 13px; }
+      .hero-title { font-size: 54px; }
+      .hero-subtitle { font-size: 24px; }
+      .gpu-badge { display: none; }
+    }
   </style>
 </head>
 <body>
