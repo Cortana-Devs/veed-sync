@@ -18,6 +18,8 @@ import ImageTextures from "../image/imageTextures";
 import TitleText from "./text/titleText";
 import BlendPattern from "./blendPattern";
 import Utils from "../utils";
+import Particles from "./sprites/particles";
+import ParticleModel from "./sprites/particleModel";
 
 export default class Renderer {
   constructor(gl, audio, opts) {
@@ -130,6 +132,20 @@ export default class Renderer {
     this.titleText = new TitleText(gl, params);
     this.blendPattern = new BlendPattern(params);
     this.resampleShader = new ResampleShader(gl);
+    this.particles = new Particles(gl, params);
+    this.particles.setEnabled(false);
+    this.particleModel = new ParticleModel(gl, params);
+    this.particleModel.setEnabled(false);
+    this.particleModelPrev = new ParticleModel(gl, params);
+    this.particleModelPrev.setEnabled(false);
+
+    // Model-effect controls
+    this.modelEffectsEnabled = false;
+    this.modelOnly = false;
+    this.modelBlendTime = 1.2;
+    this.modelBlendProgress = 1.0;
+    this.modelTransitionActive = false;
+    this.modelBase = { pointSize: 2.0, scale: 0.4, spinSpeed: 0.2 };
 
     this.supertext = {
       startTime: -1,
@@ -366,6 +382,7 @@ export default class Renderer {
     this.motionVectors.updateGlobals(params);
     this.titleText.updateGlobals(params);
     this.blendPattern.updateGlobals(params);
+    this.particles.updateGlobals(params);
 
     this.warpUVs = new Float32Array(
       (this.mesh_width + 1) * (this.mesh_height + 1) * 2
@@ -1002,7 +1019,46 @@ export default class Renderer {
       );
     }
 
-    this.motionVectors.drawMotionVectors(mdVSFrameMixed, this.warpUVs);
+    // Model-based effects: audio-reactive params + transitions
+    const dt = elapsedTime || 0;
+    const energy = Math.max(0, Math.min(1,
+      0.6 * this.audioLevels.bass_att + 0.3 * this.audioLevels.mid_att + 0.1 * this.audioLevels.treb_att
+    ));
+
+    if (this.modelEffectsEnabled) {
+      // Update dynamic params from audio
+      const scale = this.modelBase.scale * (1.0 + 0.35 * energy);
+      const pointSize = this.modelBase.pointSize * (0.85 + 0.6 * energy);
+      const spinSpeed = this.modelBase.spinSpeed * (0.6 + 1.4 * energy);
+      this.particleModel.scale = scale;
+      this.particleModel.pointSize = pointSize;
+      this.particleModel.spinSpeed = spinSpeed;
+      this.particles.configure({ pointSize: Math.max(2.0, 5.0 * energy), speed: 1.0 + energy });
+
+      // Transition mix between previous and current models
+      let alphaCur = 1.0;
+      let alphaPrev = 0.0;
+      if (this.modelTransitionActive) {
+        this.modelBlendProgress += dt / this.modelBlendTime;
+        if (this.modelBlendProgress >= 1.0) {
+          this.modelBlendProgress = 1.0;
+          this.modelTransitionActive = false;
+          this.particleModelPrev.setEnabled(false);
+        }
+        alphaCur = this.modelBlendProgress;
+        alphaPrev = 1.0 - this.modelBlendProgress;
+      }
+
+      // Draw as overlay
+      this.particles.drawParticles(dt, this.audioLevels);
+      this.particleModelPrev.draw(dt, alphaPrev);
+      this.particleModel.draw(dt, alphaCur);
+      this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+    } else {
+      // Still allow ambiance particles if enabled
+      this.particles.drawParticles(dt, this.audioLevels);
+      this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+    }
 
     if (this.preset.shapes && this.preset.shapes.length > 0) {
       this.customShapes.forEach((shape, i) => {
@@ -1107,7 +1163,12 @@ export default class Renderer {
   }
 
   renderToScreen() {
-    if (this.outputFXAA) {
+    // If model-only mode is enabled and we have a model loaded, bypass comp pass and output current framebuffer
+    const modelLoaded = this.particleModel && this.particleModel.count > 0;
+    if (this.modelOnly && this.modelEffectsEnabled && modelLoaded) {
+      this.bindFrambufferAndSetViewport(null, this.width, this.height);
+      // Already drew into default framebuffer in render() before borders/text overlay
+    } else if (this.outputFXAA) {
       this.bindFrambufferAndSetViewport(
         this.compFrameBuffer,
         this.texsizeX,
@@ -1182,6 +1243,41 @@ export default class Renderer {
       this.bindFrambufferAndSetViewport(null, this.width, this.height);
       this.outputShader.renderQuadTexture(this.compTexture);
     }
+  }
+
+  // Public controls for model effects
+  setModelEffectsEnabled(enabled) {
+    this.modelEffectsEnabled = !!enabled;
+    this.particleModel.setEnabled(!!enabled);
+  }
+
+  setModelOnlyMode(enabled) {
+    this.modelOnly = !!enabled;
+  }
+
+  setModelBaseParams(params = {}) {
+    this.modelBase = Object.assign({}, this.modelBase, params);
+  }
+
+  async loadModelWithTransition(url, opts = {}) {
+    // Move current to prev
+    if (this.particleModel && this.particleModel.count > 0) {
+      // swap buffers by reusing data via toString is pricey; just keep prev as copy of current buffer if needed
+      this.particleModelPrev = this.particleModelPrev || new ParticleModel(this.gl, {});
+      // We can't clone GL buffer easily; instead, swap references
+      const tmp = this.particleModelPrev;
+      this.particleModelPrev = this.particleModel;
+      this.particleModel = tmp;
+    }
+    // Load new into current
+    await this.particleModel.loadOBJFromURL(url, opts.sampleEvery || 4);
+    this.particleModel.setEnabled(true);
+    if (opts.configure) this.particleModel.configure(opts.configure);
+    // Start transition
+    this.modelBlendProgress = 0.0;
+    this.modelBlendTime = opts.blendTime || 1.2;
+    this.modelTransitionActive = true;
+    this.modelEffectsEnabled = true;
   }
 
   launchSongTitleAnim(text) {

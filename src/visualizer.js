@@ -10,6 +10,10 @@ export default class Visualizer {
   constructor(audioContext, canvas, opts) {
     this.opts = opts;
 
+    // Backend selection and output mode
+    this.backendRequested = (opts && opts.backend) || "auto"; // auto | webgl2 | webgpu
+    this.directCanvas = !!(opts && opts.directCanvas);
+
     // Initialize RNG context
     this.rng = initializeRNG(opts);
     this.deterministicMode = opts.deterministic || opts.testMode;
@@ -17,15 +21,27 @@ export default class Visualizer {
 
     const vizWidth = opts.width || 1200;
     const vizHeight = opts.height || 900;
-    if (window.OffscreenCanvas) {
-      this.internalCanvas = new OffscreenCanvas(vizWidth, vizHeight);
-    } else {
-      this.internalCanvas = document.createElement("canvas");
+    if (this.directCanvas) {
+      this.internalCanvas = canvas;
       this.internalCanvas.width = vizWidth;
       this.internalCanvas.height = vizHeight;
+    } else {
+      if (window.OffscreenCanvas) {
+        this.internalCanvas = new OffscreenCanvas(vizWidth, vizHeight);
+      } else {
+        this.internalCanvas = document.createElement("canvas");
+        this.internalCanvas.width = vizWidth;
+        this.internalCanvas.height = vizHeight;
+      }
     }
 
-    this.gl = this.internalCanvas.getContext("webgl2", {
+    // Experimental WebGPU discovery (fallback to WebGL2 for now)
+    this.backendDetected = (typeof navigator !== "undefined" && navigator.gpu)
+      ? "webgpu"
+      : "webgl2";
+
+    // Always use WebGL2 renderer for now
+    this.gl = (this.directCanvas ? canvas : this.internalCanvas).getContext("webgl2", {
       alpha: false,
       antialias: false,
       depth: false,
@@ -33,7 +49,10 @@ export default class Visualizer {
       premultipliedAlpha: false,
     });
 
-    this.outputGl = canvas.getContext('2d', { willReadFrequently: false });
+    // If rendering directly to the display canvas, skip 2d blit
+    this.outputGl = this.directCanvas
+      ? null
+      : canvas.getContext('2d', { willReadFrequently: false });
 
     this.baseValsDefaults = {
       decay: 0.98,
@@ -767,6 +786,11 @@ export default class Visualizer {
   }
 
   setCanvas(canvas) {
+    // In direct mode, the internal canvas is the output canvas.
+    if (this.directCanvas) {
+      // No-op: caller should recreate the visualizer to switch canvases in direct mode
+      return;
+    }
     this.outputGl = canvas.getContext('2d', { willReadFrequently: false });
   }
 
@@ -778,6 +802,46 @@ export default class Visualizer {
     }
 
     return renderOutput;
+  }
+
+  // Experimental: control particles via public API
+  setParticlesEnabled(enabled) {
+    if (this.renderer && this.renderer.particles) this.renderer.particles.setEnabled(enabled);
+  }
+
+  configureParticles(config) {
+    if (this.renderer && this.renderer.particles) this.renderer.particles.configure(config);
+  }
+
+  // Particle model controls
+  async loadParticleModelFromURL(url, opts = {}) {
+    if (this.renderer && this.renderer.particleModel) {
+      await this.renderer.particleModel.loadOBJFromURL(url, opts.sampleEvery || 4);
+      if (opts.enabled != null) this.renderer.particleModel.setEnabled(!!opts.enabled);
+      if (opts.configure) this.renderer.particleModel.configure(opts.configure);
+    }
+  }
+
+  setParticleModelEnabled(enabled) {
+    if (this.renderer && this.renderer.particleModel) this.renderer.particleModel.setEnabled(enabled);
+  }
+
+  configureParticleModel(config) {
+    if (this.renderer && this.renderer.particleModel) this.renderer.particleModel.configure(config);
+  }
+
+  // Model effects facade
+  setModelEffectsEnabled(enabled) {
+    if (this.renderer && this.renderer.setModelEffectsEnabled) this.renderer.setModelEffectsEnabled(enabled);
+  }
+  setModelOnlyMode(enabled) {
+    if (this.renderer && this.renderer.setModelOnlyMode) this.renderer.setModelOnlyMode(enabled);
+  }
+  setModelBaseParams(params) {
+    if (this.renderer && this.renderer.setModelBaseParams) this.renderer.setModelBaseParams(params);
+  }
+  async loadModelWithTransition(url, opts) {
+    if (this.renderer && this.renderer.loadModelWithTransition) return this.renderer.loadModelWithTransition(url, opts);
   }
 
   launchSongTitleAnim(text) {

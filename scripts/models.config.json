@@ -1,0 +1,23 @@
+{
+  "human": [
+    { "name": "male02", "url": "https://raw.githubusercontent.com/mrdoob/three.js/r152/examples/models/obj/male02/male02.obj" },
+    { "name": "female02", "url": "https://raw.githubusercontent.com/mrdoob/three.js/r152/examples/models/obj/female02/female02.obj" }
+  ],
+  "animals": [
+    { "name": "cow", "url": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/cow.obj" }
+  ],
+  "alpha_predators": [
+    
+  ],
+  "fantasy": [
+    { "name": "suzanne", "url": "https://raw.githubusercontent.com/mrdoob/three.js/r152/examples/models/obj/suzanne/suzanne.obj" },
+    { "name": "cerberus", "url": "https://raw.githubusercontent.com/mrdoob/three.js/r152/examples/models/obj/cerberus/Cerberus.obj" },
+    { "name": "armadillo", "url": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/armadillo.obj" }
+  ],
+  "supernatural": [
+    { "name": "walt_head", "url": "https://raw.githubusercontent.com/mrdoob/three.js/r152/examples/models/obj/walt/WaltHead.obj" },
+    { "name": "armadillo", "url": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/armadillo.obj" }
+  ]
+}
+
+
