@@ -659,6 +659,7 @@
             visualizer.renderer.setPostFX?.({ bassShake: 0, zoomBounce: 0 });
           }
           try { localStorage.setItem('reduceMotion', enabled ? '1' : '0'); } catch(_) {}
+          document.body.setAttribute('data-reduce-motion', enabled ? '1' : '0');
           applyFx();
           showToast(`Reduce motion ${enabled ? 'enabled' : 'disabled'}`);
         };
@@ -838,6 +839,9 @@
       --glass-bg2: rgba(255,255,255,0.04);
       --glass-stroke: rgba(255,255,255,0.16);
       --glass-glow: rgba(192,255,51,0.20);
+      --water-blur: 28px;
+      --water-tint1: rgba(180, 220, 255, 0.10);
+      --water-tint2: rgba(120, 180, 255, 0.06);
     }
 
     html, body {
@@ -853,17 +857,38 @@
       position: fixed;
       left: 0;
       right: 0;
-      background: linear-gradient(135deg, rgba(18,20,54,0.55), rgba(10,12,36,0.45));
-      backdrop-filter: blur(12px) saturate(120%);
-      -webkit-backdrop-filter: blur(12px) saturate(120%);
+      background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2));
+      backdrop-filter: blur(var(--water-blur)) saturate(180%);
+      -webkit-backdrop-filter: blur(var(--water-blur)) saturate(180%);
       color: var(--bar-fg);
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 16px;
       z-index: 5;
-      box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 -1px 0 rgba(255,255,255,0.06) inset, 0 8px 24px rgba(0,0,0,0.25);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 -1px 0 rgba(255,255,255,0.04) inset, 0 8px 24px rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.08);
+      isolation: isolate; /* ensure blend happens against bar background, not canvas */
     }
+    #topbar, #bottombar { position: fixed; overflow: hidden; }
+    #topbar::before, #bottombar::before,
+    #settingsPanel::before, #playlistPanel::before,
+    .modal-card::before, #toast::before, .busy-card::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(120% 60% at 10% -20%, rgba(255,255,255,0.28), rgba(255,255,255,0) 60%),
+        radial-gradient(80% 50% at 120% 0%, rgba(255,255,255,0.16), rgba(255,255,255,0) 70%);
+      mix-blend-mode: screen; opacity: 0.9;
+    }
+    #topbar::after, #bottombar::after,
+    #settingsPanel::after, #playlistPanel::after,
+    .modal-card::after, #toast::after, .busy-card::after {
+      content: ""; position: absolute; inset: -20% -10%; pointer-events: none;
+      background: conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.08) 0 10%, rgba(255,255,255,0) 10% 100%);
+      filter: blur(14px); opacity: 0.4; animation: caustics 18s linear infinite;
+      mask-image: radial-gradient(120% 100% at 50% 50%, #000 40%, transparent 80%);
+    }
+    @keyframes caustics { to { transform: rotate(360deg) translate3d(0,0,0); } }
 
     #topbar { top: 0; height: 56px; }
     #bottombar { bottom: 0; height: 70px; }
@@ -887,7 +912,16 @@
       font-size: 18px;
     }
 
-    .top-actions i { font-size: 20px; margin-left: 18px; opacity: 0.9; cursor: pointer; transition: transform .12s ease, opacity .12s ease; }
+    .top-actions i {
+      font-size: 20px; margin-left: 18px; opacity: 0.9; cursor: pointer;
+      transition: transform .12s ease, opacity .12s ease;
+      color: #fff;
+      display: inline-grid; place-items: center; padding: 4px; border-radius: 8px;
+      /* Create local contrast bubble by inverting only the backdrop under the icon */
+      backdrop-filter: invert(1) saturate(120%);
+      -webkit-backdrop-filter: invert(1) saturate(120%);
+      mix-blend-mode: normal;
+    }
     .top-actions i:hover { opacity: 1; transform: translateY(-1px); }
     .gpu-badge { margin-left: 12px; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 12px; letter-spacing: .3px; }
     .gpu-badge.ok { background: rgba(80,200,120,0.22); }
@@ -912,27 +946,33 @@
     }
     .btn:hover { transform: translateY(-1px) scale(1.02); box-shadow: 0 10px 28px rgba(0,0,0,0.28), 0 0 0 2px rgba(255,255,255,0.06) inset; }
     .btn:active { transform: translateY(1px) scale(0.99); }
-    .btn i { font-size: 18px; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.25)); }
+    .btn i {
+      font-size: 18px; color: #fff;
+      display: inline-grid; place-items: center; padding: 4px; border-radius: 8px;
+      backdrop-filter: invert(1) saturate(120%);
+      -webkit-backdrop-filter: invert(1) saturate(120%);
+      mix-blend-mode: normal;
+    }
     .btn:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
 
     #canvas {
       position: fixed;
-      top: 56px;
+      top: 0;
       left: 0;
       right: 0;
-      bottom: 70px;
+      bottom: 0;
       width: 100vw;
-      height: calc(100vh - 56px - 70px);
+      height: 100vh;
       background: #000;
       display: block;
     }
 
     #hero {
       position: fixed;
-      top: 56px;
+      top: 0;
       left: 0;
       right: 0;
-      bottom: 70px;
+      bottom: 0;
       display: grid;
       place-items: center;
       background: url('../preview.png') center/cover no-repeat;
@@ -962,9 +1002,9 @@
       position: fixed;
       bottom: 80px;
       right: 16px;
-      background: linear-gradient(135deg, rgba(22,26,68,0.42), rgba(14,16,42,0.36));
-      backdrop-filter: blur(var(--glass-blur)) saturate(160%);
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+      background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2));
+      backdrop-filter: blur(var(--water-blur)) saturate(180%);
+      -webkit-backdrop-filter: blur(var(--water-blur)) saturate(180%);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px;
       padding: 16px;
@@ -996,12 +1036,21 @@
     #busy {
       position: fixed; inset: 56px 0 70px 0; display: grid; place-items: center; background: rgba(8,9,24,0.35); color: var(--bar-fg); z-index: 9; opacity: 0; transition: opacity .2s ease; pointer-events: none;
     }
-    .busy-card { background: linear-gradient(135deg, rgba(18,20,54,0.70), rgba(10,12,36,0.64)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+    .busy-card { background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2)); backdrop-filter: blur(calc(var(--water-blur) * 0.6)); -webkit-backdrop-filter: blur(calc(var(--water-blur) * 0.6)); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; box-shadow: 0 18px 48px rgba(0,0,0,0.45); }
     .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Toast */
-    #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: linear-gradient(135deg, rgba(38,41,94,0.82), rgba(28,31,74,0.78)); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--bar-fg); padding: 10px 14px; border-radius: 12px; opacity: 0; transition: opacity .15s ease, transform .15s ease; pointer-events: none; z-index: 11; border: 1px solid rgba(255,255,255,0.10); }
+    #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2)); backdrop-filter: blur(calc(var(--water-blur) * 0.4)); -webkit-backdrop-filter: blur(calc(var(--water-blur) * 0.4)); color: var(--bar-fg); padding: 10px 14px; border-radius: 12px; opacity: 0; transition: opacity .15s ease, transform .15s ease; pointer-events: none; z-index: 11; border: 1px solid rgba(255,255,255,0.10); box-shadow: 0 16px 40px rgba(0,0,0,0.38); }
+
+    /* Reduce motion -> disable shimmer */
+    body[data-reduce-motion="1"] #topbar::after,
+    body[data-reduce-motion="1"] #bottombar::after,
+    body[data-reduce-motion="1"] #settingsPanel::after,
+    body[data-reduce-motion="1"] #playlistPanel::after,
+    body[data-reduce-motion="1"] .modal-card::after,
+    body[data-reduce-motion="1"] #toast::after,
+    body[data-reduce-motion="1"] .busy-card::after { display: none; }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
     #toast.error { background: rgba(160,30,30,0.95); }
 
