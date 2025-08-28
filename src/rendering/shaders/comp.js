@@ -275,6 +275,13 @@ export default class CompShader {
       uniform float post_grain;        // 0..1
       uniform float post_grain_luma;   // 0..1 (apply more grain to shadows)
       uniform vec3 post_tint;          // rgb multiplier, default (1,1,1)
+      // Bass-driven screen shake/zoom
+      uniform float post_bass_shake;       // 0..1 intensity
+      uniform float post_bass_shake_freq;  // Hz
+      uniform float post_bass_shake_zoom;  // 0..1 extra zoom on shake
+      // Downbeat zoom bounce
+      uniform float post_zoom_bounce;      // 0..1 intensity
+      uniform float post_zoom_bounce_freq; // Hz
 
       uniform float bass;
       uniform float mid;
@@ -375,6 +382,30 @@ export default class CompShader {
         float rad = length(uv - 0.5);
         float ang = atan(uv.x - 0.5, uv.y - 0.5);
         vec3 hue_shader = vColor.rgb;
+
+        // --- Bass shake: adjust uv BEFORE sampling ---
+        if (post_bass_shake > 0.0) {
+          float b = clamp(bass_att, 0.0, 2.0);
+          float pulse = smoothstep(0.9, 1.3, b);
+          float freq = max(0.1, post_bass_shake_freq);
+          float osc = sin(time * 6.2831853 * freq);
+          float shake = post_bass_shake * (0.6 * pulse + 0.4 * b) * (0.5 + 0.5 * osc);
+          vec2 dir = normalize(vec2(sin(time * 13.37), cos(time * 17.91)));
+          float px = 10.0 * shake; // ~10px at full strength
+          uv += dir * px * texsize.zw; // texsize.zw are 1/width,1/height
+          float z = post_bass_shake_zoom * shake;
+          if (z > 0.0) {
+            uv = (uv - 0.5) * (1.0 - z) + 0.5;
+          }
+        }
+
+        // Zoom bounce (downbeat pulse)
+        if (post_zoom_bounce > 0.0) {
+          float freqB = max(0.1, post_zoom_bounce_freq);
+          float oscB = 0.5 + 0.5 * sin(time * 6.2831853 * freqB);
+          float zb = post_zoom_bounce * (0.65 + 0.35 * oscB);
+          uv = (uv - 0.5) * (1.0 - zb) + 0.5;
+        }
 
         ${fragShaderText}
 
@@ -639,6 +670,26 @@ export default class CompShader {
     this.postTintLoc = this.gl.getUniformLocation(
       this.shaderProgram,
       "post_tint"
+    );
+    this.postBassShakeLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_bass_shake"
+    );
+    this.postBassShakeFreqLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_bass_shake_freq"
+    );
+    this.postBassShakeZoomLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_bass_shake_zoom"
+    );
+    this.postZoomBounceLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_zoom_bounce"
+    );
+    this.postZoomBounceFreqLoc = this.gl.getUniformLocation(
+      this.shaderProgram,
+      "post_zoom_bounce_freq"
     );
 
     this.qaLoc = this.gl.getUniformLocation(this.shaderProgram, "_qa");
@@ -1032,6 +1083,16 @@ export default class CompShader {
     this.gl.uniform1f(this.postGrainLumaLoc, _grl);
     const _t = (mdVSFrame.post_tint != null) ? mdVSFrame.post_tint : (fx.tint != null ? fx.tint : [1.0,1.0,1.0]);
     this.gl.uniform3fv(this.postTintLoc, new Float32Array(_t));
+    const _shake = (fx.bassShake != null ? fx.bassShake : 0.0);
+    const _shakeFreq = (fx.bassShakeFreq != null ? fx.bassShakeFreq : 2.0);
+    const _shakeZoom = (fx.bassShakeZoom != null ? fx.bassShakeZoom : 0.05);
+    this.gl.uniform1f(this.postBassShakeLoc, _shake);
+    this.gl.uniform1f(this.postBassShakeFreqLoc, _shakeFreq);
+    this.gl.uniform1f(this.postBassShakeZoomLoc, _shakeZoom);
+    const _zb = (fx.zoomBounce != null ? fx.zoomBounce : 0.0);
+    const _zbf = (fx.zoomBounceFreq != null ? fx.zoomBounceFreq : 1.5);
+    this.gl.uniform1f(this.postZoomBounceLoc, _zb);
+    this.gl.uniform1f(this.postZoomBounceFreqLoc, _zbf);
 
     this.gl.uniform4fv(
       this.qaLoc,

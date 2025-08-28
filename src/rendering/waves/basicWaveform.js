@@ -100,6 +100,11 @@ export default class BasicWaveform {
 
   generateWaveform(blending, blendProgress, timeArrayL, timeArrayR, mdVSFrame) {
     let alpha = mdVSFrame.wave_a;
+    // Beat-reactive alpha swell
+    if (mdVSFrame.onbeat || mdVSFrame.on_downbeat) {
+      const swell = (mdVSFrame.onbeat ? 0.12 : 0.0) + (mdVSFrame.on_downbeat ? 0.1 : 0.0);
+      alpha = Math.min(1.0, Math.max(0.0, alpha + swell));
+    }
     const vol = (mdVSFrame.bass + mdVSFrame.mid + mdVSFrame.treb) / 3.0;
 
     if (vol > -0.01 && alpha > 0.001 && timeArrayL.length > 0) {
@@ -142,6 +147,10 @@ export default class BasicWaveform {
         }
 
         alpha = mdVSFrame.wave_a;
+        if (mdVSFrame.onbeat || mdVSFrame.on_downbeat) {
+          const swell = (mdVSFrame.onbeat ? 0.12 : 0.0) + (mdVSFrame.on_downbeat ? 0.1 : 0.0);
+          alpha = Math.min(1.0, Math.max(0.0, alpha + swell));
+        }
         if (waveMode === 0) {
           if (mdVSFrame.modwavealphabyvolume > 0) {
             const alphaDiff =

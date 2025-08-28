@@ -157,6 +157,20 @@ export default class Renderer {
     this.lastShotTime = -5;
     this.energyEMA = 0;
 
+    // Transition quantization state
+    this.quantizeTransitions = false;
+    this.quantizeBars = 1;
+    this.pendingPreset = null;
+    this._loadingImmediate = false;
+    this._lastBarForQuant = 0;
+
+    // Event router reactive state
+    this._camNudgeZ = 0;      // forward dolly
+    this._camNudgeSide = 0;   // side sway
+    this._fovNarrow = 0;      // lens punch
+    this._particlesBurst = 0; // particles burst boost
+    this._grainSpark = 0;     // grain spark boost
+
     // Post FX defaults
     this.postFX = {
       exposure: 0.0,      // stops
@@ -167,6 +181,11 @@ export default class Renderer {
       grain: 0.0,         // 0..1
       grainLuma: 0.75,    // 0..1
       tint: [1.0, 1.0, 1.0],
+      bassShake: 0.0,         // 0..1
+      bassShakeFreq: 2.0,     // Hz
+      bassShakeZoom: 0.05,    // zoom strength
+      zoomBounce: 0.0,        // 0..1, downbeat bounce zoom
+      zoomBounceFreq: 1.5,    // Hz
     };
 
     // Vibe presets
@@ -294,6 +313,12 @@ export default class Renderer {
   }
 
   loadPreset(preset, blendTime) {
+    if (this.quantizeTransitions && !this._loadingImmediate && this.beatState) {
+      // Defer transition to downbeat boundary
+      this.pendingPreset = { preset, blendTime: Math.max(0, blendTime) };
+      return;
+    }
+
     this.blendPattern.createBlendPattern();
     this.blending = true;
     this.blendStartTime = this.time;
@@ -379,6 +404,13 @@ export default class Renderer {
         Renderer.getHighestBlur(compText)
       );
     }
+  }
+
+  // Auto-cycle vibes on phrase boundaries (every 4 bars by default)
+  enableAutoVibes(enabled = true, barsPerVibe = 4) {
+    this.autoVibes = !!enabled;
+    this.barsPerVibe = Math.max(1, barsPerVibe | 0);
+    this._lastBarCount = this.beatState ? this.beatState.barCount : 0;
   }
 
   loadExtraImages(imageData) {
@@ -948,7 +980,37 @@ export default class Renderer {
       const dt = elapsedTime || 1 / Math.max(24, Math.round(this.fps) || 30);
       const spec = this.audio.freqArrayL || this.audio.freqArray || null;
       if (this.beatSync && spec) {
+        // Provide band ranges to BeatSync once
+        if (!this._beatBandsSet) {
+          const sampleRate = this.audio.audioContext ? this.audio.audioContext.sampleRate : 44100;
+          const bucketHz = sampleRate / this.audio.fftSize;
+          const bassLow = Math.max(0, Math.round(20 / bucketHz) - 1);
+          const bassHigh = Math.max(0, Math.round(320 / bucketHz) - 1);
+          const midHigh = Math.max(0, Math.round(2800 / bucketHz) - 1);
+          const trebHigh = Math.max(0, Math.round(11025 / bucketHz) - 1);
+          this.beatSync.setBands([
+            { start: bassLow, stop: bassHigh },
+            { start: bassHigh, stop: midHigh },
+            { start: midHigh, stop: trebHigh },
+          ]);
+          this._beatBandsSet = true;
+        }
         this.beatState = this.beatSync.update(dt, spec);
+      }
+    }
+
+    // If a preset change is queued for downbeat, trigger exactly on bar boundary
+    if (this.quantizeTransitions && this.pendingPreset && this.beatState) {
+      const shouldTrigger = this.beatState.onDownbeat &&
+        ((this.beatState.barCount % Math.max(1, this.quantizeBars)) === 0) &&
+        (this._lastBarForQuant !== this.beatState.barCount);
+      if (shouldTrigger) {
+        const { preset: _qpreset, blendTime: _qblend } = this.pendingPreset;
+        this.pendingPreset = null;
+        this._loadingImmediate = true;
+        this.loadPreset(_qpreset, _qblend);
+        this._loadingImmediate = false;
+        this._lastBarForQuant = this.beatState.barCount;
       }
     }
 
@@ -986,14 +1048,24 @@ export default class Renderer {
       globalVars.beat_phase = this.beatState.phase;
       globalVars.bar_phase = this.beatState.barPhase;
       globalVars.onbeat = this.beatState.onBeat ? 1 : 0;
+      globalVars.on_downbeat = this.beatState.onDownbeat ? 1 : 0;
       globalVars.bpm = this.beatState.bpm;
       globalVars.beat_conf = this.beatState.confidence;
+      globalVars.flux = this.beatState.flux || 0;
+      globalVars.on_bass = this.beatState.onBass ? 1 : 0;
+      globalVars.on_mid = this.beatState.onMid ? 1 : 0;
+      globalVars.on_treb = this.beatState.onTreb ? 1 : 0;
     } else {
       globalVars.beat_phase = 0;
       globalVars.bar_phase = 0;
       globalVars.onbeat = 0;
+      globalVars.on_downbeat = 0;
       globalVars.bpm = 120;
       globalVars.beat_conf = 0;
+      globalVars.flux = 0;
+      globalVars.on_bass = 0;
+      globalVars.on_mid = 0;
+      globalVars.on_treb = 0;
     }
 
     const mdVSFrame = this.presetEquationRunner.runFrameEquations(globalVars);
@@ -1100,27 +1172,42 @@ export default class Renderer {
     }
 
     if (this.numBlurPasses > 0) {
+      const bloomBoost = this.beatState?.onBass ? Math.min(1.0, Math.max(0.0, 0.85 * (this.beatState.confidence || 0))) : 0.0;
+      const blurBoost1 = 0.12 * bloomBoost;
+      const blurBoost2 = 0.08 * bloomBoost;
+      const blurBoost3 = 0.04 * bloomBoost;
+      // Temporarily bias blur ranges for this frame on bass onsets
+      const blurMinsBoosted = [
+        Math.max(0, blurMins[0] - blurBoost1),
+        Math.max(0, blurMins[1] - blurBoost2),
+        Math.max(0, blurMins[2] - blurBoost3),
+      ];
+      const blurMaxsBoosted = [
+        Math.min(1, blurMaxs[0] + blurBoost1),
+        Math.min(1, blurMaxs[1] + blurBoost2),
+        Math.min(1, blurMaxs[2] + blurBoost3),
+      ];
       this.blurShader1.renderBlurTexture(
         this.targetTexture,
         mdVSFrame,
-        blurMins,
-        blurMaxs
+        bloomBoost > 0 ? blurMinsBoosted : blurMins,
+        bloomBoost > 0 ? blurMaxsBoosted : blurMaxs
       );
 
       if (this.numBlurPasses > 1) {
         this.blurShader2.renderBlurTexture(
           this.blurTexture1,
           mdVSFrame,
-          blurMins,
-          blurMaxs
+          bloomBoost > 0 ? blurMinsBoosted : blurMins,
+          bloomBoost > 0 ? blurMaxsBoosted : blurMaxs
         );
 
         if (this.numBlurPasses > 2) {
           this.blurShader3.renderBlurTexture(
             this.blurTexture2,
             mdVSFrame,
-            blurMins,
-            blurMaxs
+            bloomBoost > 0 ? blurMinsBoosted : blurMins,
+            bloomBoost > 0 ? blurMaxsBoosted : blurMaxs
           );
         }
       }
@@ -1163,12 +1250,20 @@ export default class Renderer {
       // Face-level cinematic framing
       const framing = this.particleModel.getFramingInfo();
       const faceY = framing.faceY || 0.5;
-      const baseEyeZ = 2.4 - 0.35 * energy; // closer for portrait
+      // Decay event router states
+      const conf = Math.max(0, Math.min(1, this.beatState?.confidence || 0));
+      this._camNudgeZ *= 0.92; this._camNudgeSide *= 0.90; this._fovNarrow *= 0.92; this._particlesBurst *= 0.88; this._grainSpark *= 0.85;
+      if (this.beatState?.onBass) { this._camNudgeZ += 0.9 * conf; this._fovNarrow += 0.6 * conf; this._camNudgeSide += 0.25 * conf; }
+      if (this.beatState?.onMid) { this._particlesBurst += 0.9 * conf; }
+      if (this.beatState?.onTreb) { this._grainSpark += 0.7 * conf; }
+
+      const baseEyeZ = 2.4 - 0.35 * energy - 0.20 * this._camNudgeZ; // closer for portrait, bass punch-in
       const baseEyeY = faceY + 0.06 + 0.08 * Math.sin(this.time * 0.45);
       let eye = [0.0, baseEyeY, baseEyeZ];
       // Slightly wider angle on wide screens to fill frame
       const aspect = this.width / this.height;
       let fov = (aspect >= 1.7 ? 46 : 50) * Math.PI / 180;
+      fov *= (1.0 - 0.10 * Math.min(1.0, this._fovNarrow));
 
       // Apply active shot blending
       if (this.cameraShotActive) {
@@ -1188,9 +1283,9 @@ export default class Renderer {
 
       // Slight side dolly for shot variety
       const beatWobble = this.beatState ? (0.08 * Math.sin(this.beatState.phase * Math.PI * 2)) : 0.0;
-      const side = 0.10 * Math.sin(this.time * 0.35) + beatWobble;
+      const side = 0.10 * Math.sin(this.time * 0.35) + beatWobble + 0.05 * this._camNudgeSide;
       this.particleModel.setCamera({ eye: [side, eye[1], eye[2]], target: [0, faceY, 0], fov, aspect });
-      this.particles.configure({ pointSize: Math.max(2.0, 5.0 * energy), speed: 1.0 + energy });
+      this.particles.configure({ pointSize: Math.max(2.0, 5.0 * (energy + 0.25 * this._particlesBurst)), speed: 1.0 + energy + 0.6 * this._particlesBurst });
 
       // Transition mix between previous and current models
       let alphaCur = 1.0;
@@ -1215,6 +1310,32 @@ export default class Renderer {
       // Still allow ambiance particles if enabled
       this.particles.drawParticles(dt, this.audioLevels);
       this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+    }
+
+    // Beat-driven PostFX modulation (subtle, cinematic)
+    if (this.beatState) {
+      const conf = Math.max(0, Math.min(1, this.beatState.confidence || 0));
+      const onBeatPulse = this.beatState.onBeat ? (0.15 * conf) : 0.0;
+      const beatSwell = 0.05 * Math.sin(this.beatState.phase * Math.PI * 2);
+      const bassPunch = (this.beatState.onBass ? 0.06 : 0.0) * conf;
+      const trebCrackle = (this.beatState.onTreb ? 0.03 : 0.0) * conf;
+      const downbeatBounce = (this.beatState.onDownbeat ? 0.55 : 0.0) * conf;
+
+      const targetFX = {
+        exposure: this.postFX.exposure + onBeatPulse + beatSwell,
+        contrast: this.postFX.contrast + bassPunch,
+        grain: Math.max(0, this.postFX.grain + trebCrackle),
+        bassShake: Math.min(1.0, Math.max(0.0, (this.beatState.onBass ? 0.65 : 0.0) * conf)),
+        zoomBounce: Math.min(1.0, Math.max(0.0, downbeatBounce)),
+      };
+      // smooth towards target to avoid stepping
+      const lerp = (a, b, t) => a * (1 - t) + b * t;
+      const t = 0.15;
+      this.postFX.exposure = lerp(this.postFX.exposure, targetFX.exposure, t);
+      this.postFX.contrast = lerp(this.postFX.contrast, targetFX.contrast, t);
+      this.postFX.grain = lerp(this.postFX.grain, targetFX.grain, t);
+      this.postFX.bassShake = lerp(this.postFX.bassShake, targetFX.bassShake, 0.25);
+      this.postFX.zoomBounce = lerp(this.postFX.zoomBounce, targetFX.zoomBounce, 0.25);
     }
 
     if (this.preset.shapes && this.preset.shapes.length > 0) {
@@ -1242,6 +1363,15 @@ export default class Renderer {
           this.preset.waves[i]
         );
       });
+    }
+
+    // Auto vibe cycle on phrase boundary
+    if (this.autoVibes && this.beatState) {
+      if (this._lastBarCount == null) this._lastBarCount = this.beatState.barCount;
+      if (this.beatState.barCount !== this._lastBarCount && (this.beatState.barCount % this.barsPerVibe) === 0) {
+        this.cycleVibes(1);
+      }
+      this._lastBarCount = this.beatState.barCount;
     }
 
     if (this.blending) {
@@ -1511,6 +1641,12 @@ export default class Renderer {
   // Inject beat synchronizer
   setBeatSync(instance) {
     this.beatSync = instance || null;
+  }
+
+  // Quantize preset transitions to downbeats (every N bars)
+  setQuantizedTransitions(enabled = true, bars = 1) {
+    this.quantizeTransitions = !!enabled;
+    this.quantizeBars = Math.max(1, bars | 0);
   }
 
   // ---- Audio responsiveness controls ----

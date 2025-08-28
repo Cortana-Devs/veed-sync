@@ -20,6 +20,7 @@ export default class Visualizer {
     this.deterministicMode = opts.deterministic || opts.testMode;
     this.audio = new AudioProcessor(audioContext);
     this.beatSync = new BeatSync({ expectedBpm: (opts && opts.bpm) || 120, meter: (opts && opts.meter) || 4 });
+    this.captureStreams = [];
 
     const vizWidth = opts.width || 1200;
     const vizHeight = opts.height || 900;
@@ -306,12 +307,59 @@ export default class Visualizer {
   }
 
   connectAudio(audioNode) {
+    if (this.audioNode && this.audioNode !== audioNode) {
+      try { this.audio.disconnectAudio(this.audioNode); } catch (_) {}
+    }
     this.audioNode = audioNode;
     this.audio.connectAudio(audioNode);
   }
 
   disconnectAudio(audioNode) {
-    this.audio.disconnectAudio(audioNode);
+    try { this.audio.disconnectAudio(audioNode || this.audioNode); } catch (_) {}
+    if (!audioNode || audioNode === this.audioNode) this.audioNode = null;
+  }
+
+  async startMicCapture(constraints) {
+    const cons = constraints || { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('getUserMedia not supported');
+    }
+    const stream = await navigator.mediaDevices.getUserMedia(cons);
+    const src = (this.audio.audioContext || new (window.AudioContext || window.webkitAudioContext)()).createMediaStreamSource(stream);
+    this.captureStreams.push(stream);
+    this.connectAudio(src);
+    return { stream, sourceNode: src };
+  }
+
+  async startTabCapture() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      throw new Error('getDisplayMedia not supported');
+    }
+    // Many browsers require video track present to allow tab/system audio
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false } });
+    const src = (this.audio.audioContext || new (window.AudioContext || window.webkitAudioContext)()).createMediaStreamSource(stream);
+    this.captureStreams.push(stream);
+    this.connectAudio(src);
+    return { stream, sourceNode: src };
+  }
+
+  stopAllCaptures() {
+    this.captureStreams.forEach((s) => {
+      try { s.getTracks().forEach((t) => t.stop()); } catch(_) {}
+    });
+    this.captureStreams = [];
+  }
+
+  connectMediaElement(audioElement) {
+    const ctx = this.audio.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    const node = ctx.createMediaElementSource(audioElement);
+    this.connectAudio(node);
+    return node;
+  }
+
+  selectNoInput() {
+    if (this.audioNode) this.disconnectAudio(this.audioNode);
+    this.stopAllCaptures();
   }
 
   // Override defaults, but only include variables in default map

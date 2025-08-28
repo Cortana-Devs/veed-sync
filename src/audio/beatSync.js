@@ -5,6 +5,8 @@ export default class BeatSync {
     this.maxHistory = 64;
     this.reset();
     this.setConfig(opts);
+    this.bandRanges = null; // [{start, stop}, ...]
+    this.bandThresh = [ { mean:0, var:1 }, { mean:0, var:1 }, { mean:0, var:1 } ];
   }
 
   reset() {
@@ -36,6 +38,13 @@ export default class BeatSync {
     if (meter) this.meter = meter;
   }
 
+  setBands(ranges) {
+    // ranges: array of {start, stop} index inclusive/exclusive
+    if (Array.isArray(ranges) && ranges.length >= 3) {
+      this.bandRanges = ranges.slice(0, 3).map((r) => ({ start: Math.max(0, r.start|0), stop: Math.max(0, r.stop|0) }));
+    }
+  }
+
   // dt: seconds between successive calls
   // spectrum: Float32Array of magnitudes (0..N-1), length stable across calls
   update(dt, spectrum) {
@@ -44,10 +53,17 @@ export default class BeatSync {
 
     // Spectral flux (positive changes only)
     let flux = 0;
+    const bandFlux = [0, 0, 0];
     if (this.prevSpec && spectrum && spectrum.length === this.prevSpec.length) {
       for (let i = 0; i < spectrum.length; i++) {
         const diff = spectrum[i] - this.prevSpec[i];
         if (diff > 0) flux += diff;
+        if (diff > 0 && this.bandRanges) {
+          for (let b = 0; b < 3; b++) {
+            const r = this.bandRanges[b];
+            if (i >= r.start && i < r.stop) bandFlux[b] += diff;
+          }
+        }
       }
     }
     this.prevSpec = spectrum ? spectrum.slice(0) : this.prevSpec;
@@ -63,6 +79,19 @@ export default class BeatSync {
 
     const thresh = m.mean + this.sensitivity * this.threshold * std;
     const isOnset = flux > thresh;
+    let bandOnsets = [false, false, false];
+    if (this.bandRanges) {
+      for (let b = 0; b < 3; b++) {
+        const st = this.bandThresh[b];
+        const a = 0.02;
+        const d = bandFlux[b] - st.mean;
+        st.mean += a * d;
+        st.var = (1 - a) * (st.var + a * d * d);
+        const s = Math.sqrt(Math.max(1e-6, st.var));
+        const th = st.mean + this.sensitivity * this.threshold * s;
+        bandOnsets[b] = bandFlux[b] > th;
+      }
+    }
 
     // Beat phase progression
     if (this.period <= 0.1 || this.period > 2.0) {
@@ -73,6 +102,7 @@ export default class BeatSync {
     this.barPhase = ((this.beatCount % this.meter) + this.phase) / this.meter;
 
     // Onset handling and tempo tracking
+    let onDownbeat = false;
     if (isOnset) {
       if (this.lastBeatTime >= 0) {
         const ioi = this.time - this.lastBeatTime;
@@ -100,13 +130,14 @@ export default class BeatSync {
       // Snap phase on onset for tight sync
       this.phase = 0;
       this.beatCount += 1;
+      onDownbeat = ((this.beatCount - 1) % this.meter) === 0;
       if (this.beatCount % this.meter === 0) this.barCount += 1;
     }
 
-    return this.getState();
+    return this.getState(bandOnsets, flux, onDownbeat);
   }
 
-  getState() {
+  getState(bandOnsets = [false, false, false], flux = 0, onDownbeat = false) {
     return {
       time: this.time,
       bpm: this.bpm,
@@ -114,9 +145,14 @@ export default class BeatSync {
       phase: this.phase,      // within beat [0..1)
       barPhase: this.barPhase, // within bar [0..1)
       onBeat: this.onBeat,
+      onDownbeat: !!onDownbeat,
       beatCount: this.beatCount,
       barCount: this.barCount,
       confidence: this.confidence,
+      flux,
+      onBass: !!bandOnsets[0],
+      onMid: !!bandOnsets[1],
+      onTreb: !!bandOnsets[2],
     };
   }
 }
