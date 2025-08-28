@@ -12,7 +12,7 @@
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
   <script type="module">
-    import butterchurn from '../dist/butterchurn.js';
+    import butterchurn from '../dist/butterchurn.min.js';
 
     let visualizer = null;
     let rendering = false;
@@ -47,11 +47,11 @@
 
     function openModal(id) {
       const el = document.getElementById(id);
-      if (el) el.classList.add('open');
+      if (el) { el.classList.add('open'); el.setAttribute('aria-hidden', 'false'); }
     }
     function closeModal(id) {
       const el = document.getElementById(id);
-      if (el) el.classList.remove('open');
+      if (el) { el.classList.remove('open'); el.setAttribute('aria-hidden', 'true'); }
     }
 
     function renderModelsPanel() {
@@ -79,7 +79,13 @@
             const preload = document.getElementById('modelsPreload').checked;
             const url = it.file.startsWith('http') ? it.file : ('../' + it.file.replace(/^\.?\/?/, ''));
             try {
-              await visualizer.loadModelWithTransition(url, { sampleEvery: sample, blendTime: blend });
+              if (visualizer.loadModelWithTransition) {
+                await visualizer.loadModelWithTransition(url, { sampleEvery: sample, blendTime: blend });
+              } else if (visualizer.loadParticleModelFromURL) {
+                await visualizer.loadParticleModelFromURL(url, { sampleEvery: sample, enabled: true });
+              } else {
+                throw new Error('Model loading not supported in this build');
+              }
               visualizer.setModelEffectsEnabled(true);
               if (preload) localStorage.setItem('modelURL', url);
               showToast(`Loaded model: ${it.name}`);
@@ -410,23 +416,24 @@
     async function initPlayer() {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-      // WebGPU detection & badge
-      if (navigator.gpu) {
+      // WebGPU detection & badge (non-blocking)
+      (async () => {
         try {
-          const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-          if (adapter) {
-            const device = await adapter.requestDevice();
+          if (navigator.gpu) {
+            const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            const device = adapter && await adapter.requestDevice();
             if (device) {
               gpuBadge.textContent = 'WebGPU';
               gpuBadge.classList.add('ok');
               const aw = document.getElementById('aboutWebgpu'); if (aw) aw.textContent = 'available';
-            } else { gpuBadge.textContent = 'WebGL2'; }
-          } else { gpuBadge.textContent = 'WebGL2'; }
-        } catch (_) { gpuBadge.textContent = 'WebGL2'; }
-      } else {
+              const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = 'WebGPU';
+              return;
+            }
+          }
+        } catch(_) {}
         gpuBadge.textContent = 'WebGL2';
-      }
-      const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = gpuBadge.textContent;
+        const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = 'WebGL2';
+      })();
       presets = {};
       if (window.base && window.base.default) Object.assign(presets, window.base.default);
       if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
@@ -452,6 +459,13 @@
         backend,
         directCanvas: direct
       });
+      // Compatibility shim: ensure model transition API exists by falling back to particle model loader
+      if (!visualizer.loadModelWithTransition && visualizer.loadParticleModelFromURL) {
+        visualizer.loadModelWithTransition = async (url, opts = {}) => {
+          const sampleEvery = opts.sampleEvery || 4;
+          await visualizer.loadParticleModelFromURL(url, { sampleEvery, enabled: true });
+        };
+      }
       if (pendingTapConnect && tapNode && visualizer?.connectAudio) {
         try { visualizer.connectAudio(tapNode); } catch(_) {}
         pendingTapConnect = false;
@@ -468,7 +482,13 @@
       visualizer.setModelOnlyMode?.(modelOnly);
       const preloadModel = localStorage.getItem('modelURL');
       if (preloadModel) {
-        try { await visualizer.loadModelWithTransition(preloadModel, { blendTime: 1.5, sampleEvery: 3 }); } catch(_) {}
+        try {
+          if (visualizer.loadModelWithTransition) {
+            await visualizer.loadModelWithTransition(preloadModel, { blendTime: 1.5, sampleEvery: 3 });
+          } else if (visualizer.loadParticleModelFromURL) {
+            await visualizer.loadParticleModelFromURL(preloadModel, { sampleEvery: 3, enabled: true });
+          }
+        } catch(_) {}
       }
       try {
         visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
@@ -519,6 +539,7 @@
       live = document.getElementById('live');
       level = document.getElementById('level');
       gpuBadge = document.getElementById('gpuBadge');
+      if (gpuBadge) gpuBadge.textContent = 'Detecting…';
 
       // Wire UI first; initialize player after to avoid blocking buttons if init errors
 

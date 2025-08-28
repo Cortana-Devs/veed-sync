@@ -145,7 +145,16 @@ export default class Renderer {
     this.modelBlendTime = 1.2;
     this.modelBlendProgress = 1.0;
     this.modelTransitionActive = false;
-    this.modelBase = { pointSize: 2.0, scale: 0.4, spinSpeed: 0.2 };
+    this.modelBase = { pointSize: 2.5, scale: 0.6, spinSpeed: 0.35 };
+
+    // Cinematic camera state
+    this.cameraShotActive = false;
+    this.cameraShotT = 0;
+    this.cameraShotDuration = 1.2;
+    this.cameraShotFrom = { eye: [0, 0.6, 3.0], fov: 50 * Math.PI / 180 };
+    this.cameraShotTo = { eye: [0, 0.6, 2.4], fov: 45 * Math.PI / 180 };
+    this.lastShotTime = -5;
+    this.energyEMA = 0;
 
     this.supertext = {
       startTime: -1,
@@ -190,6 +199,24 @@ export default class Renderer {
     if (!this.preset.useWASM) {
       this.regVars = this.presetEquationRunner.mdVSRegs;
     }
+  }
+
+  // Helpers for cinematic camera
+  _mix(a, b, t) { return a * (1 - t) + b * t; }
+  _easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; }
+  _startCameraShot(energy) {
+    this.cameraShotActive = true;
+    this.cameraShotT = 0;
+    // from current base eye
+    const baseZ = 3.0 - 0.25 * energy;
+    const baseY = 0.6 + 0.15 * Math.sin(this.time * 0.6);
+    this.cameraShotFrom = { eye: [0, baseY, baseZ], fov: 50 * Math.PI / 180 };
+    // Target a closer over-shoulder zoom and slight tilt via Y
+    const targetZ = Math.max(1.8, baseZ - 0.7);
+    const targetY = baseY + 0.08;
+    const targetFov = 42 * Math.PI / 180;
+    this.cameraShotTo = { eye: [0.0, targetY, targetZ], fov: targetFov };
+    this.cameraShotDuration = 0.9 + 0.6 * (1.0 - energy); // shorter on strong beats
   }
 
   static getHighestBlur(t) {
@@ -1020,19 +1047,53 @@ export default class Renderer {
     }
 
     // Model-based effects: audio-reactive params + transitions
-    const dt = elapsedTime || 0;
+    const dt = elapsedTime || 1 / Math.max(24, Math.round(this.fps) || 30);
     const energy = Math.max(0, Math.min(1,
       0.6 * this.audioLevels.bass_att + 0.3 * this.audioLevels.mid_att + 0.1 * this.audioLevels.treb_att
     ));
 
     if (this.modelEffectsEnabled) {
       // Update dynamic params from audio
-      const scale = this.modelBase.scale * (1.0 + 0.35 * energy);
-      const pointSize = this.modelBase.pointSize * (0.85 + 0.6 * energy);
-      const spinSpeed = this.modelBase.spinSpeed * (0.6 + 1.4 * energy);
+      const scale = this.modelBase.scale * (1.0 + 0.2 * energy);
+      const pointSize = this.modelBase.pointSize * (0.95 + 0.35 * energy);
+      const spinSpeed = this.modelBase.spinSpeed * (0.7 + 0.9 * energy);
       this.particleModel.scale = scale;
       this.particleModel.pointSize = pointSize;
       this.particleModel.spinSpeed = spinSpeed;
+      // Cinematic camera dolly (subtle)
+      // Beat/shot detection
+      this.energyEMA = 0.85 * this.energyEMA + 0.15 * energy;
+      const energyDelta = energy - this.energyEMA;
+      const now = this.time;
+      const canTrigger = (now - this.lastShotTime) > 1.2; // cooldown
+      if (energyDelta > 0.18 && canTrigger) {
+        this._startCameraShot(energy);
+        this.lastShotTime = now;
+      }
+
+      // Base cinematic camera (idle dolly)
+      const baseEyeZ = 3.0 - 0.25 * energy;
+      const baseEyeY = 0.6 + 0.15 * Math.sin(this.time * 0.6);
+      let eye = [0.0, baseEyeY, baseEyeZ];
+      let fov = 50 * Math.PI / 180;
+
+      // Apply active shot blending
+      if (this.cameraShotActive) {
+        this.cameraShotT += dt / this.cameraShotDuration;
+        if (this.cameraShotT >= 1.0) {
+          this.cameraShotT = 1.0;
+          this.cameraShotActive = false;
+        }
+        const t = this._easeInOutCubic(this.cameraShotT);
+        eye = [
+          this._mix(this.cameraShotFrom.eye[0], this.cameraShotTo.eye[0], t),
+          this._mix(this.cameraShotFrom.eye[1], this.cameraShotTo.eye[1], t),
+          this._mix(this.cameraShotFrom.eye[2], this.cameraShotTo.eye[2], t),
+        ];
+        fov = this._mix(this.cameraShotFrom.fov, this.cameraShotTo.fov, t);
+      }
+
+      this.particleModel.setCamera({ eye, fov, aspect: this.width / this.height });
       this.particles.configure({ pointSize: Math.max(2.0, 5.0 * energy), speed: 1.0 + energy });
 
       // Transition mix between previous and current models
