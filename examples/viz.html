@@ -43,6 +43,7 @@
     let levelArray = null;
     let userSyncOffsetMs = Number(localStorage.getItem('syncOffsetMs') || '0');
     let modelsIndex = null;
+    let pendingTapConnect = false;
 
     function openModal(id) {
       const el = document.getElementById(id);
@@ -76,7 +77,7 @@
             const sample = Math.max(1, parseInt(document.getElementById('modelsSample').value || '3', 10));
             const blend = Math.max(0, parseFloat(document.getElementById('modelsBlend').value || '1.5'));
             const preload = document.getElementById('modelsPreload').checked;
-            const url = it.file;
+            const url = it.file.startsWith('http') ? it.file : ('../' + it.file.replace(/^\.?\/?/, ''));
             try {
               await visualizer.loadModelWithTransition(url, { sampleEvery: sample, blendTime: blend });
               visualizer.setModelEffectsEnabled(true);
@@ -98,7 +99,15 @@
       hero.classList.add('hidden');
     }
 
+    function ensureAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioContext;
+    }
+
     function connectToAudioTap(node) {
+      ensureAudioContext();
       if (!tapNode) {
         tapNode = audioContext.createGain();
         tapNode.gain.value = 1.0;
@@ -115,11 +124,17 @@
         setupLevelMeter();
       }
       node.connect(tapNode);
-      visualizer.connectAudio(tapNode);
+      if (visualizer && visualizer.connectAudio) {
+        visualizer.connectAudio(tapNode);
+        pendingTapConnect = false;
+      } else {
+        pendingTapConnect = true;
+      }
     }
 
     function startRenderer() {
       if (rendering) return;
+      if (!visualizer || !ensureAudioContext()) { showToast('Initializing…'); return; }
       rendering = true;
       let lastAudioT = null;
       const loop = () => {
@@ -160,6 +175,7 @@
       if (sourceNode) {
         sourceNode.disconnect();
       }
+      ensureAudioContext();
       sourceNode = audioContext.createBufferSource();
       sourceNode.buffer = buffer;
       connectToAudioTap(sourceNode);
@@ -168,6 +184,7 @@
     }
 
     function loadLocalFiles(fileList, index = 0) {
+      ensureAudioContext();
       audioContext.resume();
       showBusy(true, 'Decoding audio…');
       const reader = new FileReader();
@@ -201,6 +218,7 @@
         return;
       }
       navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+        ensureAudioContext();
         audioContext.resume();
         const micSourceNode = audioContext.createMediaStreamSource(stream);
         const gainNode = audioContext.createGain();
@@ -218,6 +236,7 @@
     }
 
     function nextPreset(blendTime = 5.7) {
+      if (!visualizer) { showToast('Initializing…'); return; }
       presetIndexHist.push(presetIndex);
       const numPresets = presetKeys.length;
       if (presetRandom) {
@@ -230,6 +249,7 @@
     }
 
     function prevPreset(blendTime = 5.7) {
+      if (!visualizer) { showToast('Initializing…'); return; }
       const numPresets = presetKeys.length;
       if (presetIndexHist.length > 0) {
         presetIndex = presetIndexHist.pop();
@@ -348,6 +368,9 @@
     }
 
     function getAudioNow() {
+      if (!audioContext) {
+        return (performance.now() / 1000) + userSyncOffsetMs / 1000;
+      }
       try {
         if (audioContext && typeof audioContext.getOutputTimestamp === 'function') {
           const ts = audioContext.getOutputTimestamp();
@@ -407,8 +430,13 @@
       presets = {};
       if (window.base && window.base.default) Object.assign(presets, window.base.default);
       if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
-      presets = _(presets).toPairs().sortBy(([k, v]) => k.toLowerCase()).fromPairs().value();
-      presetKeys = _.keys(presets);
+      // Sort presets case-insensitively without relying on lodash
+      {
+        const entries = Object.entries(presets);
+        entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
+        presets = Object.fromEntries(entries);
+        presetKeys = entries.map(([k]) => k);
+      }
       presetIndex = Math.floor(Math.random() * presetKeys.length);
 
       // Apply stored backend prefs
@@ -424,6 +452,10 @@
         backend,
         directCanvas: direct
       });
+      if (pendingTapConnect && tapNode && visualizer?.connectAudio) {
+        try { visualizer.connectAudio(tapNode); } catch(_) {}
+        pendingTapConnect = false;
+      }
       // Apply stored particle settings
       const particlesOn = (localStorage.getItem('particlesOn') || '0') === '1';
       const particlesCount = parseInt(localStorage.getItem('particlesCount') || '600', 10);
@@ -458,8 +490,10 @@
         presets = {};
         if (packBase?.checked && window.base?.default) Object.assign(presets, window.base.default);
         if (packExtra?.checked && window.extra?.default) Object.assign(presets, window.extra.default);
-        presets = _(presets).toPairs().sortBy(([k]) => k.toLowerCase()).fromPairs().value();
-        presetKeys = _.keys(presets);
+        const entries = Object.entries(presets);
+        entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
+        presets = Object.fromEntries(entries);
+        presetKeys = entries.map(([k]) => k);
         presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
         buildPlaylist();
         showToast('Preset packs updated');
@@ -468,7 +502,7 @@
       packExtra?.addEventListener('change', applyPacks);
       // Try to load models index for the Models panel
       try {
-        const res = await fetch('assets/models/index.json', { cache: 'no-cache' });
+        const res = await fetch('../assets/models/index.json', { cache: 'no-cache' });
         if (res.ok) modelsIndex = await res.json();
       } catch (_) {}
     }
@@ -486,7 +520,7 @@
       level = document.getElementById('level');
       gpuBadge = document.getElementById('gpuBadge');
 
-      initPlayer();
+      // Wire UI first; initialize player after to avoid blocking buttons if init errors
 
       document.getElementById('micBtn').addEventListener('click', () => connectMic());
       document.getElementById('uploadBtn').addEventListener('click', () => document.getElementById('fileInput').click());
@@ -499,8 +533,11 @@
         if (rendering) { stopRenderer(); showToast('Paused'); announce('Rendering paused'); }
         else { startRenderer(); showToast('Rendering started'); announce('Rendering started'); }
       });
-      document.getElementById('prevBtn').addEventListener('click', () => prevPreset());
-      document.getElementById('nextBtn').addEventListener('click', () => nextPreset());
+      // Some buttons are not present; guard optional ones
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      prevBtn?.addEventListener('click', () => prevPreset());
+      nextBtn?.addEventListener('click', () => nextPreset());
       document.getElementById('nextArrowBtn').addEventListener('click', () => nextPreset());
       document.getElementById('backArrowBtn').addEventListener('click', () => prevPreset());
 
@@ -596,20 +633,20 @@
       if (modelFxCb) {
         const stored = (localStorage.getItem('modelFx') || '0') === '1';
         modelFxCb.checked = stored;
-        visualizer.setModelEffectsEnabled(stored);
+        if (visualizer?.setModelEffectsEnabled) visualizer.setModelEffectsEnabled(stored);
         modelFxCb.addEventListener('change', (e) => {
           localStorage.setItem('modelFx', e.target.checked ? '1' : '0');
-          visualizer.setModelEffectsEnabled(e.target.checked);
+          if (visualizer?.setModelEffectsEnabled) visualizer.setModelEffectsEnabled(e.target.checked);
           showToast(`Model effects ${e.target.checked ? 'enabled' : 'disabled'}`);
         });
       }
       if (modelOnlyCb) {
         const stored = (localStorage.getItem('modelOnly') || '0') === '1';
         modelOnlyCb.checked = stored;
-        visualizer.setModelOnlyMode(stored);
+        if (visualizer?.setModelOnlyMode) visualizer.setModelOnlyMode(stored);
         modelOnlyCb.addEventListener('change', (e) => {
           localStorage.setItem('modelOnly', e.target.checked ? '1' : '0');
-          visualizer.setModelOnlyMode(e.target.checked);
+          if (visualizer?.setModelOnlyMode) visualizer.setModelOnlyMode(e.target.checked);
           showToast(`Mode: ${e.target.checked ? 'Model-only' : 'Mixed'}`);
         });
       }
@@ -658,7 +695,7 @@
       if (modelsBtn) {
         modelsBtn.addEventListener('click', () => {
           if (!modelsIndex) {
-            fetch('assets/models/index.json', { cache: 'no-cache' })
+            fetch('../assets/models/index.json', { cache: 'no-cache' })
               .then(r => r.ok ? r.json() : null)
               .then(j => { modelsIndex = j; renderModelsPanel(); openModal('modelsModal'); })
               .catch(() => { showToast('No models index found', true); });
@@ -668,6 +705,16 @@
           }
         });
       }
+      // Kick off initialization last and handle failures gracefully
+      (async () => {
+        try {
+          await initPlayer();
+        } catch (e) {
+          console.error('Visualizer init failed', e);
+          showToast('Initialization failed', true);
+          announce('Initialization failed');
+        }
+      })();
     });
   </script>
 
