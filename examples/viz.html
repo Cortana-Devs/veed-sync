@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Butterchurn Viz</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+
+  <script type="text/javascript" src="https://unpkg.com/lodash"></script>
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
+  <script type="module">
+    import butterchurn from '../dist/butterchurn.js';
+
+    let visualizer = null;
+    let rendering = false;
+    let rafId = 0;
+    let audioContext = null;
+    let sourceNode = null;
+    // Unified tap feeding both destination and analysis/visualizer
+    let tapNode = null;
+    let cycleInterval = null;
+    let presets = {};
+    let presetKeys = [];
+    let presetIndexHist = [];
+    let presetIndex = 0;
+    let presetCycle = true;
+    let presetCycleLength = 15000;
+    let presetRandom = true;
+
+    let canvas; // assigned on DOMContentLoaded
+    let hero;
+    let settingsPanel;
+    let playlistPanel;
+    let busy;
+    let toast;
+    let live;
+    let level;
+    let gpuBadge;
+    let analyser = null;
+    let levelArray = null;
+    let userSyncOffsetMs = Number(localStorage.getItem('syncOffsetMs') || '0');
+
+    function hideHero() {
+      hero.classList.add('hidden');
+    }
+
+    function connectToAudioTap(node) {
+      if (!tapNode) {
+        tapNode = audioContext.createGain();
+        tapNode.gain.value = 1.0;
+        // Create analyser once and keep connected
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        levelArray = new Uint8Array(analyser.frequencyBinCount);
+        tapNode.connect(analyser);
+        tapNode.connect(audioContext.destination);
+        setupLevelMeter();
+      }
+      node.connect(tapNode);
+      visualizer.connectAudio(tapNode);
+    }
+
+    function startRenderer() {
+      if (rendering) return;
+      rendering = true;
+      const loop = () => {
+        if (!rendering) return;
+        visualizer.render();
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+      hideHero();
+      setPlayState(true);
+    }
+
+    function stopRenderer() {
+      rendering = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      setPlayState(false);
+    }
+
+    function setPlayState(isPlaying) {
+      const btn = document.getElementById('playBtn');
+      if (!btn) return;
+      btn.innerHTML = isPlaying ? '<i class="fa-solid fa-pause"></i>' : '<i class="fa-solid fa-play"></i>';
+      btn.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+      btn.title = isPlaying ? 'Pause' : 'Render';
+    }
+
+    function playBufferSource(buffer) {
+      startRenderer();
+      if (sourceNode) {
+        sourceNode.disconnect();
+      }
+      sourceNode = audioContext.createBufferSource();
+      sourceNode.buffer = buffer;
+      connectToAudioTap(sourceNode);
+      sourceNode.start(0);
+      announce('Playing local audio');
+    }
+
+    function loadLocalFiles(fileList, index = 0) {
+      audioContext.resume();
+      showBusy(true, 'Decoding audio…');
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        audioContext.decodeAudioData(
+          event.target.result,
+          (buf) => {
+            playBufferSource(buf);
+            setTimeout(() => {
+              if (fileList.length > index + 1) {
+                loadLocalFiles(fileList, index + 1);
+              } else {
+                if (sourceNode) {
+                  sourceNode.disconnect();
+                  sourceNode = null;
+                }
+              }
+            }, buf.duration * 1000);
+            showBusy(false);
+            showToast('Now playing: local file');
+          }
+        );
+      };
+      reader.readAsArrayBuffer(fileList[index]);
+    }
+
+    function connectMic() {
+      const constraints = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('getUserMedia not supported');
+        return;
+      }
+      navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+        audioContext.resume();
+        const micSourceNode = audioContext.createMediaStreamSource(stream);
+        const gainNode = audioContext.createGain();
+        gainNode.gain.value = 1.25;
+        micSourceNode.connect(gainNode);
+        connectToAudioTap(gainNode);
+        startRenderer();
+        showToast('Mic connected');
+        announce('Microphone connected');
+      }).catch((err) => {
+        console.error('Error getting audio stream from getUserMedia', err);
+        showToast('Mic permission denied', true);
+        announce('Microphone permission denied');
+      });
+    }
+
+    function nextPreset(blendTime = 5.7) {
+      presetIndexHist.push(presetIndex);
+      const numPresets = presetKeys.length;
+      if (presetRandom) {
+        presetIndex = Math.floor(Math.random() * numPresets);
+      } else {
+        presetIndex = (presetIndex + 1) % numPresets;
+      }
+      visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+      highlightActivePreset();
+    }
+
+    function prevPreset(blendTime = 5.7) {
+      const numPresets = presetKeys.length;
+      if (presetIndexHist.length > 0) {
+        presetIndex = presetIndexHist.pop();
+      } else {
+        presetIndex = ((presetIndex - 1) + numPresets) % numPresets;
+      }
+      visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+      highlightActivePreset();
+    }
+
+    function restartCycleInterval() {
+      if (cycleInterval) {
+        clearInterval(cycleInterval);
+        cycleInterval = null;
+      }
+      if (presetCycle) {
+        cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
+      }
+    }
+
+    function resizeRenderer() {
+      const top = document.getElementById('topbar').offsetHeight;
+      const bottom = document.getElementById('bottombar').offsetHeight;
+      const width = window.innerWidth;
+      const height = window.innerHeight - top - bottom;
+      canvas.width = width;
+      canvas.height = height;
+      if (visualizer) {
+        visualizer.setRendererSize(width, height);
+      }
+    }
+
+    function showBusy(state, label = 'Working…') {
+      busy.setAttribute('aria-hidden', state ? 'false' : 'true');
+      busy.style.opacity = state ? '1' : '0';
+      busy.querySelector('.busy-label').textContent = label;
+    }
+
+    function showToast(message, isError = false) {
+      toast.textContent = message;
+      toast.classList.remove('error');
+      if (isError) toast.classList.add('error');
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function announce(message) {
+      live.textContent = '';
+      setTimeout(() => live.textContent = message, 10);
+    }
+
+    function setupLevelMeter() {
+      const draw = () => {
+        if (analyser && levelArray) {
+          analyser.getByteFrequencyData(levelArray);
+          const avg = levelArray.reduce((a, b) => a + b, 0) / levelArray.length;
+          const pct = Math.min(100, Math.max(0, (avg / 255) * 100));
+          level.style.width = pct + '%';
+        }
+        requestAnimationFrame(draw);
+      };
+      requestAnimationFrame(draw);
+    }
+
+    function getAudioNow() {
+      try {
+        if (audioContext && typeof audioContext.getOutputTimestamp === 'function') {
+          const ts = audioContext.getOutputTimestamp();
+          return (ts && ts.contextTime ? ts.contextTime : audioContext.currentTime) + userSyncOffsetMs / 1000;
+        }
+      } catch (_) {}
+      const base = (audioContext.baseLatency || 0) + (audioContext.outputLatency || 0);
+      return audioContext.currentTime + base + userSyncOffsetMs / 1000;
+    }
+
+    function buildPlaylist() {
+      const list = document.getElementById('presetList');
+      list.innerHTML = '';
+      presetKeys.forEach((key, i) => {
+        const li = document.createElement('li');
+        li.textContent = key.substring(0, 80);
+        li.dataset.index = i;
+        li.addEventListener('click', () => {
+          presetIndex = i;
+          visualizer.loadPreset(presets[key], 0.5);
+          highlightActivePreset();
+          playlistPanel.classList.remove('open');
+        });
+        list.appendChild(li);
+      });
+      highlightActivePreset();
+    }
+
+    function highlightActivePreset() {
+      const list = document.getElementById('presetList');
+      const items = list.querySelectorAll('li');
+      items.forEach((li) => li.classList.remove('active'));
+      const active = list.querySelector(`li[data-index="${presetIndex}"]`);
+      if (active) active.classList.add('active');
+    }
+
+    async function initPlayer() {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+      // WebGPU detection & badge
+      if (navigator.gpu) {
+        try {
+          const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+          if (adapter) {
+            const device = await adapter.requestDevice();
+            if (device) {
+              gpuBadge.textContent = 'WebGPU';
+              gpuBadge.classList.add('ok');
+              const aw = document.getElementById('aboutWebgpu'); if (aw) aw.textContent = 'available';
+            } else { gpuBadge.textContent = 'WebGL2'; }
+          } else { gpuBadge.textContent = 'WebGL2'; }
+        } catch (_) { gpuBadge.textContent = 'WebGL2'; }
+      } else {
+        gpuBadge.textContent = 'WebGL2';
+      }
+      const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = gpuBadge.textContent;
+      presets = {};
+      if (window.base && window.base.default) Object.assign(presets, window.base.default);
+      if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
+      presets = _(presets).toPairs().sortBy(([k, v]) => k.toLowerCase()).fromPairs().value();
+      presetKeys = _.keys(presets);
+      presetIndex = Math.floor(Math.random() * presetKeys.length);
+
+      visualizer = butterchurn.createVisualizer(audioContext, canvas, {
+        width: 800,
+        height: 600,
+        pixelRatio: window.devicePixelRatio || 1,
+        textureRatio: 1
+      });
+      try {
+        visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
+      } catch (e) {
+        console.error('Failed to load preset', e);
+        showToast('Failed to load preset', true);
+      }
+      restartCycleInterval();
+      buildPlaylist();
+      resizeRenderer();
+      window.addEventListener('resize', resizeRenderer);
+
+      // Packs toggles
+      const packBase = document.getElementById('packBase');
+      const packExtra = document.getElementById('packExtra');
+      const applyPacks = () => {
+        presets = {};
+        if (packBase?.checked && window.base?.default) Object.assign(presets, window.base.default);
+        if (packExtra?.checked && window.extra?.default) Object.assign(presets, window.extra.default);
+        presets = _(presets).toPairs().sortBy(([k]) => k.toLowerCase()).fromPairs().value();
+        presetKeys = _.keys(presets);
+        presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
+        buildPlaylist();
+        showToast('Preset packs updated');
+      };
+      packBase?.addEventListener('change', applyPacks);
+      packExtra?.addEventListener('change', applyPacks);
+    }
+
+    // UI wiring
+    window.addEventListener('DOMContentLoaded', () => {
+      // Bind DOM refs now that elements exist
+      canvas = document.getElementById('canvas');
+      hero = document.getElementById('hero');
+      settingsPanel = document.getElementById('settingsPanel');
+      playlistPanel = document.getElementById('playlistPanel');
+      busy = document.getElementById('busy');
+      toast = document.getElementById('toast');
+      live = document.getElementById('live');
+      level = document.getElementById('level');
+      gpuBadge = document.getElementById('gpuBadge');
+
+      initPlayer();
+
+      document.getElementById('micBtn').addEventListener('click', () => connectMic());
+      document.getElementById('uploadBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+      document.getElementById('fileInput').addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length) {
+          loadLocalFiles(e.target.files);
+        }
+      });
+      document.getElementById('playBtn').addEventListener('click', () => {
+        if (rendering) { stopRenderer(); showToast('Paused'); announce('Rendering paused'); }
+        else { startRenderer(); showToast('Rendering started'); announce('Rendering started'); }
+      });
+      document.getElementById('prevBtn').addEventListener('click', () => prevPreset());
+      document.getElementById('nextBtn').addEventListener('click', () => nextPreset());
+      document.getElementById('nextArrowBtn').addEventListener('click', () => nextPreset());
+      document.getElementById('backArrowBtn').addEventListener('click', () => prevPreset());
+
+      document.getElementById('fullscreenBtn').addEventListener('click', () => {
+        const el = canvas;
+        if (!document.fullscreenElement) {
+          if (el.requestFullscreen) el.requestFullscreen();
+        } else {
+          if (document.exitFullscreen) document.exitFullscreen();
+        }
+      });
+
+      document.getElementById('playlistBtn').addEventListener('click', () => {
+        playlistPanel.classList.toggle('open');
+        announce(playlistPanel.classList.contains('open') ? 'Opened preset list' : 'Closed preset list');
+      });
+
+      document.getElementById('settingsBtn').addEventListener('click', () => {
+        settingsPanel.classList.toggle('open');
+        announce(settingsPanel.classList.contains('open') ? 'Opened settings' : 'Closed settings');
+      });
+
+      document.getElementById('settingCycle').addEventListener('change', (e) => {
+        presetCycle = e.target.checked;
+        restartCycleInterval();
+        showToast(`Cycle ${presetCycle ? 'enabled' : 'disabled'}`);
+      });
+      document.getElementById('settingRandom').addEventListener('change', (e) => {
+        presetRandom = e.target.checked;
+        showToast(`Random ${presetRandom ? 'enabled' : 'disabled'}`);
+      });
+      document.getElementById('settingCycleLen').addEventListener('change', (e) => {
+        const v = parseInt(e.target.value, 10);
+        if (!Number.isNaN(v) && v > 0) {
+          presetCycleLength = v * 1000;
+          restartCycleInterval();
+          showToast(`Cycle length set to ${v}s`);
+        }
+      });
+
+      // Sync offset controls
+      const offsetRange = document.getElementById('settingOffsetRange');
+      const offsetNum = document.getElementById('settingOffsetNum');
+      if (offsetRange && offsetNum) {
+        offsetRange.value = String(userSyncOffsetMs);
+        offsetNum.value = String(userSyncOffsetMs);
+        const apply = (val) => {
+          userSyncOffsetMs = Math.max(-200, Math.min(200, parseInt(val || '0', 10)));
+          localStorage.setItem('syncOffsetMs', String(userSyncOffsetMs));
+          offsetRange.value = String(userSyncOffsetMs);
+          offsetNum.value = String(userSyncOffsetMs);
+          showToast(`Sync offset ${userSyncOffsetMs} ms`);
+          announce(`Sync offset ${userSyncOffsetMs} milliseconds`);
+        };
+        offsetRange.addEventListener('input', (e) => apply(e.target.value));
+        offsetNum.addEventListener('change', (e) => apply(e.target.value));
+      }
+
+      // Keyboard shortcuts
+      window.addEventListener('keydown', (e) => {
+        if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+        if (e.code === 'Space') { if (rendering) stopRenderer(); else startRenderer(); e.preventDefault(); }
+        if (e.code === 'ArrowRight') nextPreset();
+        if (e.code === 'ArrowLeft') prevPreset();
+        if (e.key.toLowerCase() === 'f') document.getElementById('fullscreenBtn').click();
+        if (e.key.toLowerCase() === 'p') document.getElementById('playlistBtn').click();
+        if (e.key.toLowerCase() === 's') document.getElementById('settingsBtn').click();
+      });
+
+      // Drag & drop upload
+      window.addEventListener('dragover', (e) => { e.preventDefault(); });
+      window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer?.files || []).filter(f => /^audio\//.test(f.type));
+        if (files.length) { loadLocalFiles(files); showToast(`Loaded ${files.length} file(s)`); }
+      });
+
+      // Top bar actions
+      document.getElementById('extensionsBtn').addEventListener('click', () => openModal('packsModal'));
+      document.getElementById('aboutBtn').addEventListener('click', () => openModal('aboutModal'));
+    });
+  </script>
+
+  <style>
+    :root {
+      --bar-bg: #1a1d4b;
+      --bar-fg: #e8e6ff;
+      --bar-fg-dim: #c9c7f5;
+      --accent: #ffd76a;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #0a0b1e;
+      color: var(--bar-fg);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    #topbar, #bottombar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      background: var(--bar-bg);
+      color: var(--bar-fg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      z-index: 5;
+    }
+
+    #topbar { top: 0; height: 56px; }
+    #bottombar { bottom: 0; height: 70px; }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 26px;
+    }
+
+    .brand .logo {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--accent);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 18px;
+    }
+
+    .top-actions i {
+      font-size: 20px;
+      margin-left: 18px;
+      opacity: 0.9;
+      cursor: pointer;
+    }
+    .gpu-badge { margin-left: 12px; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 12px; letter-spacing: .3px; }
+    .gpu-badge.ok { background: rgba(80,200,120,0.22); }
+
+    .bar-section {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.06);
+      color: var(--bar-fg);
+      border: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn i { font-size: 18px; }
+    .btn:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+
+    #canvas {
+      position: fixed;
+      top: 56px;
+      left: 0;
+      right: 0;
+      bottom: 70px;
+      width: 100vw;
+      height: calc(100vh - 56px - 70px);
+      background: #000;
+      display: block;
+    }
+
+    #hero {
+      position: fixed;
+      top: 56px;
+      left: 0;
+      right: 0;
+      bottom: 70px;
+      display: grid;
+      place-items: center;
+      background: url('../preview.png') center/cover no-repeat;
+      z-index: 3;
+      text-align: center;
+    }
+    #hero.hidden { opacity: 0; pointer-events: none; transition: opacity .4s ease; }
+
+    .hero-inner {
+      transform: translateY(-8%);
+      color: #ffeaa8;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    .hero-title {
+      font-size: 86px;
+      margin: 18px 0 8px;
+      font-weight: 800;
+    }
+    .hero-subtitle {
+      font-size: 40px;
+      opacity: 0.95;
+    }
+
+    /* Panels */
+    #settingsPanel, #playlistPanel {
+      position: fixed;
+      bottom: 80px;
+      right: 16px;
+      background: rgba(18, 20, 54, 0.98);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 16px;
+      width: 320px;
+      max-height: 50vh;
+      overflow: auto;
+      transform: translateY(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: all .2s ease;
+      z-index: 10;
+      color: var(--bar-fg);
+    }
+    #playlistPanel { right: 360px; width: 380px; }
+    #settingsPanel.open, #playlistPanel.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
+    #settingsPanel h4, #playlistPanel h4 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
+
+    .setting-row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+    .setting-row input[type="number"] { width: 70px; }
+
+    #presetList { list-style: none; padding: 0; margin: 0; }
+    #presetList li { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+    #presetList li:hover { background: rgba(255,255,255,0.06); }
+    #presetList li.active { background: rgba(255,255,255,0.12); }
+
+    /* Busy overlay */
+    #busy {
+      position: fixed; inset: 56px 0 70px 0; display: grid; place-items: center; background: rgba(8,9,24,0.35); color: var(--bar-fg); z-index: 9; opacity: 0; transition: opacity .2s ease; pointer-events: none;
+    }
+    .busy-card { background: rgba(18,20,54,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+    .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: rgba(38,41,94,0.98); color: var(--bar-fg); padding: 10px 14px; border-radius: 10px; opacity: 0; transition: opacity .15s ease, transform .15s ease; pointer-events: none; z-index: 11; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+    #toast.error { background: rgba(160,30,30,0.95); }
+
+    /* Level meter */
+    .level-wrap { width: 120px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
+    .level { height: 100%; width: 0%; background: linear-gradient(90deg, #5bff8a, #ffd76a); }
+
+    /* Modal */
+    .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(4,6,18,0.55); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 12; }
+    .modal.open { opacity: 1; pointer-events: auto; }
+    .modal-card { width: min(92vw, 520px); background: rgba(18,20,54,0.98); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px; color: var(--bar-fg); }
+    .modal-card h3 { margin: 6px 0 12px; font-size: 18px; }
+    .modal-actions { display:flex; justify-content:flex-end; gap: 8px; margin-top: 14px; }
+    .chip { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); margin-right: 8px; font-size: 12px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin: 10px 0; }
+    .row label { font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand">
+      <div class="logo"><i class="fa-solid fa-compact-disc"></i></div>
+      <div>Butter Churn&nbsp;<span style="font-weight:400">viz</span></div>
+    </div>
+    <div class="top-actions">
+      <i id="extensionsBtn" class="fa-solid fa-puzzle-piece" title="Preset packs"></i>
+      <i id="aboutBtn" class="fa-regular fa-circle-question" title="About"></i>
+      <span id="gpuBadge" class="gpu-badge" title="Graphics backend">Detecting…</span>
+    </div>
+  </div>
+
+  <div id="hero">
+    <div class="hero-inner">
+      <div class="logo" style="margin: 0 auto; width: 110px; height: 110px; border-width: 6px; font-size: 40px;"><i class="fa-solid fa-compact-disc"></i></div>
+      <div class="hero-title">Butter Churn</div>
+      <div class="hero-subtitle">music visualizer</div>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <div id="bottombar">
+    <div class="bar-section">
+      <button id="micBtn" class="btn" title="Use Mic"><i class="fa-solid fa-microphone"></i></button>
+      <button id="uploadBtn" class="btn" title="Load local files"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+      <div class="level-wrap" aria-hidden="true"><div id="level" class="level"></div></div>
+    </div>
+    <div class="bar-section">
+      <button id="playlistBtn" class="btn" title="Presets"><i class="fa-solid fa-list"></i></button>
+      <button id="playBtn" class="btn" title="Render"><i class="fa-solid fa-play"></i></button>
+      <button id="nextBtn" class="btn" title="Next Preset"><i class="fa-solid fa-forward-step"></i></button>
+    </div>
+    <div class="bar-section">
+      <button id="settingsBtn" class="btn" title="Settings"><i class="fa-solid fa-gear"></i></button>
+      <button id="backArrowBtn" class="btn" title="Previous"><i class="fa-solid fa-arrow-left"></i></button>
+      <button id="nextArrowBtn" class="btn" title="Next"><i class="fa-solid fa-arrow-right"></i></button>
+      <button id="fullscreenBtn" class="btn" title="Fullscreen"><i class="fa-regular fa-square"></i></button>
+    </div>
+  </div>
+
+  <input id="fileInput" type="file" accept="audio/*" multiple style="display:none" />
+
+  <div id="settingsPanel">
+    <h4>Settings</h4>
+    <div class="setting-row">
+      <label for="settingCycle">Cycle presets</label>
+      <input id="settingCycle" type="checkbox" checked />
+    </div>
+    <div class="setting-row">
+      <label for="settingCycleLen">Cycle length (sec)</label>
+      <input id="settingCycleLen" type="number" min="1" value="15" />
+    </div>
+    <div class="setting-row">
+      <label for="settingRandom">Random order</label>
+      <input id="settingRandom" type="checkbox" checked />
+    </div>
+    <div class="setting-row">
+      <label for="settingOffsetRange">Sync offset (ms)</label>
+      <input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" />
+      <input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" />
+    </div>
+  </div>
+
+  <div id="playlistPanel">
+    <h4>Presets</h4>
+    <ul id="presetList"></ul>
+  </div>
+
+  <div id="busy" role="alert" aria-live="polite" aria-hidden="true">
+    <div class="busy-card">
+      <div class="spinner"></div>
+      <div class="busy-label">Working…</div>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="live" class="sr-only" aria-live="polite" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">Ready</div>
+
+  <!-- Packs Modal -->
+  <div id="packsModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <h3>Preset Packs</h3>
+      <div class="row"><label>Base</label><input id="packBase" type="checkbox" checked /></div>
+      <div class="row"><label>Extra</label><input id="packExtra" type="checkbox" checked /></div>
+      <div style="font-size:12px;opacity:.8;margin-top:6px;">Toggle which preset packs are available in the playlist.</div>
+      <div class="modal-actions">
+        <button class="btn" onclick="document.getElementById('packsModal').classList.remove('open')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About Modal -->
+  <div id="aboutModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <h3>About Butter Churn</h3>
+      <div style="font-size:14px;opacity:.92;line-height:1.5">
+        Real‑time WebGL visualizer. Mic and local audio supported. Presets courtesy of the community.
+      </div>
+      <div style="margin-top:10px;">
+        <span class="chip">GPU: <span id="aboutGpu">detecting…</span></span>
+        <span class="chip">WebGPU: <span id="aboutWebgpu">checking…</span></span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="document.getElementById('aboutModal').classList.remove('open')">Close</button>
+      </div>
+    </div>
+  </div>
+</body>
+
+
