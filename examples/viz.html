@@ -580,6 +580,44 @@
         settingsPanel.classList.toggle('open');
         announce(settingsPanel.classList.contains('open') ? 'Opened settings' : 'Closed settings');
       });
+      // Cinematic FX toggles
+      const fxBloom = document.getElementById('fxBloom');
+      const fxBassShake = document.getElementById('fxBassShake');
+      const fxZoomBounce = document.getElementById('fxZoomBounce');
+      const fxQuant = document.getElementById('fxQuantize');
+      const fxAutoVibe = document.getElementById('fxAutoVibe');
+      const fxVibeBars = document.getElementById('fxVibeBars');
+      const fxBloomStrength = document.getElementById('fxBloomStrength');
+      const fxShakeFreq = document.getElementById('fxShakeFreq');
+      const fxShakeZoom = document.getElementById('fxShakeZoom');
+      const fxBounceFreq = document.getElementById('fxBounceFreq');
+
+      const applyFx = _.throttle(() => {
+        if (!visualizer) return;
+        // Gates
+        if (visualizer.renderer) {
+          visualizer.renderer.fxGate = visualizer.renderer.fxGate || { bloom: true, bassShake: true, zoomBounce: true };
+          if (fxBloom) visualizer.renderer.fxGate.bloom = !!fxBloom.checked;
+          if (fxBassShake) visualizer.renderer.fxGate.bassShake = !!fxBassShake.checked;
+          if (fxZoomBounce) visualizer.renderer.fxGate.zoomBounce = !!fxZoomBounce.checked;
+        }
+        // Strengths
+        visualizer.renderer?.setPostFX?.({
+          bassShake: (fxBassShake?.checked ? Math.max(0, Math.min(1, parseFloat(fxBloomStrength?.value || '0.0'))) : 0),
+          bassShakeFreq: Math.max(0.1, parseFloat(fxShakeFreq?.value || '2.0')),
+          bassShakeZoom: Math.max(0.0, parseFloat(fxShakeZoom?.value || '0.05')),
+          zoomBounce: (fxZoomBounce?.checked ? 0.5 : 0.0),
+          zoomBounceFreq: Math.max(0.1, parseFloat(fxBounceFreq?.value || '1.5')),
+        });
+        // Quantize & auto vibes
+        const bars = Math.max(1, parseInt(fxVibeBars?.value || '4', 10));
+        visualizer.renderer?.setQuantizedTransitions?.(!!fxQuant?.checked, bars);
+        visualizer.renderer?.enableAutoVibes?.(!!fxAutoVibe?.checked, bars);
+      }, 100);
+
+      [fxBloom, fxBassShake, fxZoomBounce, fxQuant, fxAutoVibe, fxVibeBars, fxBloomStrength, fxShakeFreq, fxShakeZoom, fxBounceFreq]
+        .forEach((el) => el && el.addEventListener('change', applyFx));
+
 
       document.getElementById('settingCycle').addEventListener('change', (e) => {
         presetCycle = e.target.checked;
@@ -992,6 +1030,16 @@
 
   <div id="settingsPanel">
     <h4>Settings</h4>
+    <h4 style="margin-top:16px">Cinematic FX</h4>
+    <div class="setting-row"><label><i class="fa-solid fa-burst" style="margin-right:6px"></i>Bass Bloom</label><input id="fxBloom" type="checkbox" checked /></div>
+    <div class="setting-row"><label>Bloom strength</label><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
+    <div class="setting-row"><label><i class="fa-solid fa-wave-square" style="margin-right:6px"></i>Bass Shake</label><input id="fxBassShake" type="checkbox" checked /></div>
+    <div class="setting-row"><label>Shake freq (Hz)</label><input id="fxShakeFreq" type="number" min="0.1" max="8" step="0.1" value="2.5" /></div>
+    <div class="setting-row"><label>Shake zoom</label><input id="fxShakeZoom" type="number" min="0" max="0.2" step="0.005" value="0.06" /></div>
+    <div class="setting-row"><label><i class="fa-solid fa-arrows-to-circle" style="margin-right:6px"></i>Downbeat Bounce</label><input id="fxZoomBounce" type="checkbox" checked /></div>
+    <div class="setting-row"><label>Bounce freq (Hz)</label><input id="fxBounceFreq" type="number" min="0.1" max="3" step="0.1" value="1.6" /></div>
+    <div class="setting-row"><label><i class="fa-solid fa-music" style="margin-right:6px"></i>Quantize transitions</label><input id="fxQuantize" type="checkbox" checked /></div>
+    <div class="setting-row"><label>Bars per change</label><input id="fxVibeBars" type="number" min="1" max="8" step="1" value="4" /></div>
     <div class="setting-row">
       <label for="settingCycle">Cycle presets</label>
       <input id="settingCycle" type="checkbox" checked />

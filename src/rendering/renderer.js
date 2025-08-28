@@ -171,6 +171,9 @@ export default class Renderer {
     this._particlesBurst = 0; // particles burst boost
     this._grainSpark = 0;     // grain spark boost
 
+    // FX gates (UI-controlled)
+    this.fxGate = { bloom: true, bassShake: true, zoomBounce: true };
+
     // Post FX defaults
     this.postFX = {
       exposure: 0.0,      // stops
@@ -1172,7 +1175,7 @@ export default class Renderer {
     }
 
     if (this.numBlurPasses > 0) {
-      const bloomBoost = this.beatState?.onBass ? Math.min(1.0, Math.max(0.0, 0.85 * (this.beatState.confidence || 0))) : 0.0;
+      const bloomBoost = (this.fxGate.bloom && this.beatState?.onBass) ? Math.min(1.0, Math.max(0.0, 0.85 * (this.beatState.confidence || 0))) : 0.0;
       const blurBoost1 = 0.12 * bloomBoost;
       const blurBoost2 = 0.08 * bloomBoost;
       const blurBoost3 = 0.04 * bloomBoost;
