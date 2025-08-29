@@ -168,6 +168,8 @@
         if (lastAudioT != null) dt = Math.max(1/240, Math.min(0.2, t - lastAudioT));
         lastAudioT = t;
         visualizer.render({ elapsedTime: dt });
+        // After render, adapt glass opacity based on current frame luminance
+        updateGlassOpacity();
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
@@ -264,30 +266,35 @@
       reader.readAsArrayBuffer(fileList[index]);
     }
 
-    function connectMic() {
-      const constraints = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+    async function connectMic() {
+      const useRNNoise = (localStorage.getItem('rnnoise') || '0') === '1';
+      const sensitivity = Number(localStorage.getItem('micSensitivity') || '1.4');
+      const constraints = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } };
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error('getUserMedia not supported');
         return;
       }
-      navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+      try {
         ensureAudioContext();
         audioContext.resume();
-        micStream = stream;
-        micSourceNode = audioContext.createMediaStreamSource(stream);
+        const res = useRNNoise && visualizer.startMicCaptureEnhanced
+          ? await visualizer.startMicCaptureEnhanced({ constraints, suppression: 'rnnoise', sensitivity })
+          : await visualizer.startMicCapture(constraints);
+        micStream = res.stream;
+        micSourceNode = audioContext.createMediaStreamSource(micStream);
         micGainNode = audioContext.createGain();
-        micGainNode.gain.value = 1.4; // default boost
+        micGainNode.gain.value = sensitivity;
         micSourceNode.connect(micGainNode);
         connectToAudioTap(micGainNode);
         micConnected = true;
         startRenderer();
-        showToast('Mic connected');
+        showToast(`Mic connected${useRNNoise ? ' (RNNoise)' : ''}`);
         announce('Microphone connected');
-      }).catch((err) => {
+      } catch (err) {
         console.error('Error getting audio stream from getUserMedia', err);
         showToast('Mic permission denied', true);
         announce('Microphone permission denied');
-      });
+      }
     }
 
     function nextPreset(blendTime = 5.7) {
@@ -501,6 +508,38 @@
       return audioContext.currentTime + base + userSyncOffsetMs / 1000;
     }
 
+    // Dynamic background luminance sampling to adapt glass opacity
+    let luminanceProbe = null;
+    function initLuminanceProbe() {
+      try {
+        luminanceProbe = document.createElement('canvas');
+        luminanceProbe.width = 64; luminanceProbe.height = 64;
+        luminanceProbe.style.display = 'none';
+        document.body.appendChild(luminanceProbe);
+      } catch(_) {}
+    }
+    function updateGlassOpacity() {
+      if (!visualizer || !luminanceProbe) return;
+      try {
+        const ctx = luminanceProbe.getContext('2d', { willReadFrequently: false });
+        if (!ctx) return;
+        ctx.drawImage(canvas, 0, 0, luminanceProbe.width, luminanceProbe.height);
+        const data = ctx.getImageData(0, 0, luminanceProbe.width, luminanceProbe.height).data;
+        let sum = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i] / 255, g = data[i+1] / 255, b = data[i+2] / 255;
+          // Rec. 709 luma
+          sum += 0.2126*r + 0.7152*g + 0.0722*b;
+        }
+        const avgY = sum / (data.length / 4);
+        // Map luminance to extra darkening; threshold around 0.55
+        const t = Math.max(0, avgY - 0.55);
+        const darkBoost = Math.min(0.35, t * 0.85); // cap extra darkening
+        document.documentElement.style.setProperty('--bar-darken', String(darkBoost));
+        document.documentElement.style.setProperty('--panel-darken', String(darkBoost * 1.1));
+      } catch(_) {}
+    }
+
     function buildPlaylist() {
       const list = document.getElementById('presetList');
       list.innerHTML = '';
@@ -692,8 +731,17 @@
       if (gpuBadge) gpuBadge.textContent = 'Detecting…';
 
       // Wire UI first; initialize player after to avoid blocking buttons if init errors
+      // Init luminance probe for adaptive glass opacity
+      initLuminanceProbe();
 
       document.getElementById('micBtn').addEventListener('click', () => connectMic());
+      // Optional toggles stored in localStorage
+      try {
+        const rn = document.getElementById('settingRNNoise');
+        if (rn) rn.addEventListener('change', (e) => localStorage.setItem('rnnoise', e.target.checked ? '1' : '0'));
+        const sens = document.getElementById('settingMicSensitivity');
+        if (sens) sens.addEventListener('input', (e) => localStorage.setItem('micSensitivity', String(e.target.value)));
+      } catch(_) {}
       document.getElementById('uploadBtn').addEventListener('click', () => document.getElementById('fileInput').click());
       document.getElementById('fileInput').addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
@@ -729,6 +777,44 @@
       document.getElementById('settingsBtn').addEventListener('click', () => {
         settingsPanel.classList.toggle('open');
         announce(settingsPanel.classList.contains('open') ? 'Opened settings' : 'Closed settings');
+      });
+      // Scene shortcuts
+      const bindScene = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+      bindScene('sceneAnimals', async () => {
+        try {
+          // Prefer model: an animal head or creature
+          const url = '../assets/models/animals/cow.obj';
+          if (visualizer?.loadModelWithTransition) {
+            await visualizer.loadModelWithTransition(url, { sampleEvery: 3, blendTime: 1.5 });
+          }
+          visualizer.setModelEffectsEnabled?.(true);
+          visualizer.setModelOnlyMode?.(false);
+          visualizer.applyVibe?.('nature_doc');
+          showToast('Scene: Animals');
+        } catch(_) { showToast('Animals scene failed', true); }
+      });
+      bindScene('sceneWater', () => {
+        try {
+          // Water vibe: cool colors, increased tonemap and subtle zoom
+          visualizer.setModelEffectsEnabled?.(false);
+          visualizer.setPostFX?.({ tonemap: 0.9, exposure: 0.05, saturation: -0.05, tint: [0.92,1.05,1.08] });
+          showToast('Scene: Water');
+        } catch(_) { showToast('Water scene failed', true); }
+      });
+      bindScene('sceneBeach', () => {
+        try {
+          visualizer.setModelEffectsEnabled?.(false);
+          visualizer.applyVibe?.('sunset_beach');
+          showToast('Scene: Beach');
+        } catch(_) { showToast('Beach scene failed', true); }
+      });
+      bindScene('sceneParty', () => {
+        try {
+          visualizer.setModelEffectsEnabled?.(true);
+          visualizer.configureParticles?.({ maxCount: 1200 });
+          visualizer.setPostFX?.({ saturation: 0.25, contrast: 0.12, grain: 0.18, tint: [1.02,1.0,1.08] });
+          showToast('Scene: Party');
+        } catch(_) { showToast('Party scene failed', true); }
       });
       // Cinematic FX toggles
       const fxBloom = document.getElementById('fxBloom');
@@ -1026,6 +1112,8 @@
       --water-blur: 28px;
       --water-tint1: rgba(180, 220, 255, 0.10);
       --water-tint2: rgba(120, 180, 255, 0.06);
+      --bar-darken: 0;
+      --panel-darken: 0;
     }
 
     html, body {
@@ -1043,7 +1131,9 @@
       position: fixed;
       left: 0;
       right: 0;
-      background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2));
+      background:
+        linear-gradient(135deg, rgba(0,0,0, var(--bar-darken)), rgba(0,0,0, var(--bar-darken))),
+        linear-gradient(135deg, var(--water-tint1), var(--water-tint2));
       backdrop-filter: blur(var(--water-blur)) saturate(180%);
       -webkit-backdrop-filter: blur(var(--water-blur)) saturate(180%);
       color: var(--bar-fg);
@@ -1191,7 +1281,9 @@
       position: fixed;
       bottom: 80px;
       right: 16px;
-      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      background:
+        linear-gradient(135deg, rgba(0,0,0, var(--panel-darken)), rgba(0,0,0, var(--panel-darken))),
+        linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
       backdrop-filter: blur(calc(var(--water-blur) * 0.9)) saturate(220%);
       -webkit-backdrop-filter: blur(calc(var(--water-blur) * 0.9)) saturate(220%);
       border: 1px solid rgba(255,255,255,0.16);
@@ -1208,6 +1300,10 @@
       color: var(--bar-fg);
       box-shadow: 0 16px 40px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18);
     }
+    .scene-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 10px 0 6px; }
+    .scene-btn { display:flex; align-items:center; justify-content:center; gap:8px; padding:10px 12px; border-radius:12px; cursor:pointer; border: 1px solid var(--glass-stroke); background: linear-gradient(135deg, var(--glass-bg1), var(--glass-bg2)); box-shadow: 0 6px 18px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.16); color: var(--bar-fg); }
+    .scene-btn:hover { box-shadow: 0 10px 26px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.20); transform: translateY(-1px); }
+    .scene-btn i { font-size:16px; }
     #playlistPanel { right: 360px; width: clamp(320px, 48vw, 540px); }
     #settingsPanel.open, #playlistPanel.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
     #settingsPanel h4, #playlistPanel h4 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
@@ -1216,6 +1312,57 @@
     .setting-row .icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); border: 1px solid var(--glass-stroke); color: var(--bar-fg); }
     .setting-row label { display: block; font-weight: 600; }
     .setting-row small { display: block; opacity: .75; font-size: 12px; font-weight: 400; }
+
+    /* Liquid glass controls */
+    #settingsPanel input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 46px; height: 26px; border-radius: 999px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.10));
+      border: 1px solid var(--glass-stroke);
+      position: relative; cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.22);
+      transition: background .15s ease, border-color .15s ease;
+    }
+    #settingsPanel input[type="checkbox"]::after {
+      content: ""; position: absolute; top: 2px; left: 2px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      transition: transform .18s ease, background .15s ease;
+    }
+    #settingsPanel input[type="checkbox"]:checked {
+      background: linear-gradient(135deg, rgba(192,255,51,0.65), rgba(192,255,51,0.35));
+      border-color: rgba(192,255,51,0.7);
+    }
+    #settingsPanel input[type="checkbox"]:checked::after { transform: translateX(20px); background: #0a0b1e; }
+    #settingsPanel input[type="checkbox"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+
+    #settingsPanel select,
+    #settingsPanel input[type="number"],
+    #settingsPanel input[type="text"] {
+      -webkit-appearance: none; appearance: none;
+      background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.08));
+      color: var(--bar-fg);
+      border: 1px solid var(--glass-stroke);
+      border-radius: 12px; min-height: 36px;
+      padding: 8px 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18);
+    }
+    #settingsPanel select { cursor: pointer; padding-right: 34px;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="%23e5ecf5"><path d="M7 10l5 5 5-5z"/></svg>');
+      background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; }
+    #settingsPanel select:focus-visible,
+    #settingsPanel input[type="number"]:focus-visible,
+    #settingsPanel input[type="text"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+    #settingsPanel input[type="number"]::-webkit-outer-spin-button,
+    #settingsPanel input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    #settingsPanel input[type="number"] { -moz-appearance: textfield; width: 90px; }
+
+    /* Range slider */
+    #settingsPanel input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
+    #settingsPanel input[type="range"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+    #settingsPanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid rgba(255,255,255,0.6); box-shadow: 0 2px 6px rgba(0,0,0,0.25); cursor: pointer; margin-top: -7px; }
+    #settingsPanel input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid rgba(255,255,255,0.6); box-shadow: 0 2px 6px rgba(0,0,0,0.25); cursor: pointer; }
+    #settingsPanel input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); border: 1px solid var(--glass-stroke); }
     .setting-row input[type="number"] { width: 70px; }
     .setting-row:hover { box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.20); }
 
@@ -1253,7 +1400,9 @@
     /* Modal */
     .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(4,6,18,0.55); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 12; }
     .modal.open { opacity: 1; pointer-events: auto; }
-    .modal-card { width: min(92vw, 520px); background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)); backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); border: 1px solid rgba(255,255,255,0.16); border-radius: 16px; padding: 16px; color: var(--bar-fg); box-shadow: 0 22px 48px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.2); }
+    .modal-card { width: min(92vw, 520px); background:
+      linear-gradient(135deg, rgba(0,0,0, var(--panel-darken)), rgba(0,0,0, var(--panel-darken))),
+      linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)); backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); border: 1px solid rgba(255,255,255,0.16); border-radius: 16px; padding: 16px; color: var(--bar-fg); box-shadow: 0 22px 48px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.2); }
     .modal-card h3 { margin: 6px 0 12px; font-size: 18px; }
     .modal-actions { display:flex; justify-content:flex-end; gap: 8px; margin-top: 14px; }
     .chip { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); margin-right: 8px; font-size: 12px; }
@@ -1331,6 +1480,13 @@
 
   <div id="settingsPanel">
     <h4>Settings</h4>
+    <h4 style="margin-top:10px">Scenes</h4>
+    <div class="scene-grid">
+      <button class="scene-btn" id="sceneAnimals" title="Animals"><i class="fa-solid fa-paw"></i><span>Animals</span></button>
+      <button class="scene-btn" id="sceneWater" title="Water"><i class="fa-solid fa-water"></i><span>Water</span></button>
+      <button class="scene-btn" id="sceneBeach" title="Beach"><i class="fa-solid fa-umbrella-beach"></i><span>Beach</span></button>
+      <button class="scene-btn" id="sceneParty" title="Party"><i class="fa-solid fa-champagne-glasses"></i><span>Party</span></button>
+    </div>
     <h4 style="margin-top:16px">Cinematic FX</h4>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-burst"></i></div><div><label>Bass Bloom</label><small>Glowing amplification on kick transients</small></div><input id="fxBloom" type="checkbox" checked /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-sun"></i></div><div><label>Bloom strength</label><small>Intensity of glow</small></div><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
@@ -1361,6 +1517,8 @@
         <option value="internal">Internal Audio Only</option>
         <option value="both">Mic + Internal</option>
       </select></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-microphone"></i></div><div><label for="settingRNNoise">Mic noise suppression (RNNoise)</label><small>Reduce background noise</small></div><input id="settingRNNoise" type="checkbox" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-signal"></i></div><div><label for="settingMicSensitivity">Mic sensitivity</label><small>Pre-analysis gain</small></div><input id="settingMicSensitivity" type="number" min="0" max="4" step="0.05" value="1.4" /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-waveform-lines"></i></div><div><label for="settingInternalMethod">Internal source</label><small>How to capture internal audio</small></div><select id="settingInternalMethod">
         <option value="auto">Auto (prefer element)</option>
         <option value="element">Element Capture (ideal when you load files)</option>

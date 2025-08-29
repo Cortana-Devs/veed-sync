@@ -7,6 +7,21 @@ Veed Sync is a modern WebGL music visualizer inspired by MilkDrop.
 
 Open `examples/viz.html` locally after building, or host it on a static server.
 
+### Download demo assets (optional)
+
+Models:
+
+```bash
+node scripts/download-models.js
+```
+
+Images (requires free Pixabay API key):
+
+```bash
+export PIXABAY_API_KEY=YOUR_KEY
+node scripts/download-assets.js
+```
+
 ## Usage
 
 ### Installation
@@ -50,6 +65,20 @@ visualizer.setRendererSize(1600, 1200);
 // render a frame
 
 visualizer.render();
+```
+
+### Microphone sensitivity and noise suppression
+
+```JavaScript
+// Start mic capture with built-in WebRTC constraints and optional RNNoise suppression
+await visualizer.startMicCaptureEnhanced({
+  constraints: { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } },
+  suppression: 'rnnoise', // or 'none'
+  sensitivity: 1.5,
+});
+
+// Adjust input sensitivity (pre-analysis gain)
+visualizer.setMicSensitivity(1.8);
 ```
 
 ### Browser Support

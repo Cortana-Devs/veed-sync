@@ -37,6 +37,7 @@
   "homepage": "https://veedsync.com",
   "dependencies": {
     "@assemblyscript/loader": "^0.17.11",
+    "@vonage/noise-suppression": "^1.0.3",
     "ecma-proposal-math-extensions": "0.0.2",
     "eel-wasm": "^0.0.16"
   },

@@ -1,6 +1,7 @@
 import { loadModule } from "eel-wasm";
 import ascLoader from "@assemblyscript/loader";
 import AudioProcessor from "./audio/audioProcessor";
+import NoiseSuppressor from "./audio/noiseSuppression";
 import BeatSync from "./audio/beatSync";
 import Renderer from "./rendering/renderer";
 import Utils from "./utils";
@@ -21,6 +22,7 @@ export default class Visualizer {
     this.audio = new AudioProcessor(audioContext);
     this.beatSync = new BeatSync({ expectedBpm: (opts && opts.bpm) || 120, meter: (opts && opts.meter) || 4 });
     this.captureStreams = [];
+    this.noiseSuppressor = null;
 
     const vizWidth = opts.width || 1200;
     const vizHeight = opts.height || 900;
@@ -331,6 +333,41 @@ export default class Visualizer {
     return { stream, sourceNode: src };
   }
 
+  // Enhanced mic capture supporting built-in constraints and optional RNNoise suppression.
+  // options: { constraints?: MediaStreamConstraints, suppression?: 'none'|'rnnoise', sensitivity?: number }
+  async startMicCaptureEnhanced(options = {}) {
+    const cons = options.constraints || { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('getUserMedia not supported');
+    }
+    const baseStream = await navigator.mediaDevices.getUserMedia(cons);
+
+    let finalStream = baseStream;
+    let processedTrack = null;
+    if (options.suppression === 'rnnoise') {
+      try {
+        if (!this.noiseSuppressor) this.noiseSuppressor = new NoiseSuppressor();
+        const { processedStream, processedTrack: t } = await this.noiseSuppressor.processStream(baseStream);
+        finalStream = processedStream;
+        processedTrack = t;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('RNNoise suppression failed, using raw stream', e);
+        finalStream = baseStream;
+      }
+    }
+
+    const ctx = this.audio.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(finalStream);
+    this.captureStreams.push(baseStream);
+    if (finalStream !== baseStream) this.captureStreams.push(finalStream);
+    this.connectAudio(src);
+    if (Number.isFinite(options.sensitivity)) {
+      try { this.audio.setSensitivity(options.sensitivity); } catch(_) {}
+    }
+    return { stream: finalStream, sourceNode: src, processedTrack };
+  }
+
   async startTabCapture() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       throw new Error('getDisplayMedia not supported');
@@ -348,6 +385,15 @@ export default class Visualizer {
       try { s.getTracks().forEach((t) => t.stop()); } catch(_) {}
     });
     this.captureStreams = [];
+    if (this.noiseSuppressor) {
+      try { this.noiseSuppressor.dispose(); } catch(_) {}
+      this.noiseSuppressor = null;
+    }
+  }
+
+  // Public API: adjust input sensitivity (gain) applied before analysis
+  setMicSensitivity(mult) {
+    try { this.audio.setSensitivity(mult); } catch(_) {}
   }
 
   connectMediaElement(audioElement) {

@@ -11,6 +11,9 @@ importers:
       '@assemblyscript/loader':
         specifier: ^0.17.11
         version: 0.17.14
+      '@vonage/noise-suppression':
+        specifier: ^1.0.3
+        version: 1.0.3
       ecma-proposal-math-extensions:
         specifier: 0.0.2
         version: 0.0.2
@@ -583,6 +586,15 @@ packages:
   '@types/babel__traverse@7.20.7':
     resolution: {integrity: sha512-dkO5fhS7+/oos4ciWxyEyjWe48zmG6wbCheo/G2ZnHx4fs3EU6YC6UM8rk56gAjNJ9P3MTH2jo5jb92/K6wbng==}
 
+  '@types/dom-mediacapture-transform@0.1.11':
+    resolution: {integrity: sha512-Y2p+nGf1bF2XMttBnsVPHUWzRRZzqUoJAKmiP10b5umnO6DDrWI0BrGDJy1pOHoOULVmGSfFNkQrAlC5dcj6nQ==}
+
+  '@types/dom-webcodecs@0.1.16':
+    resolution: {integrity: sha512-gRNWaC3YW5EzhPRjVYy7BnxCbtLGqsgu+uTkmV/IxOF1bllFD+FAJ1KBdsDFsuJB+F+CE+nWmMlWt8vaZ3yYXA==}
+
+  '@types/emscripten@1.40.1':
+    resolution: {integrity: sha512-sr53lnYkQNhjHNN0oJDdUm5564biioI5DuOpycufDVK7D3y+GR3oUswe2rlwY1nPNyusHbrJ9WoTyIHl4/Bpwg==}
+
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
@@ -608,14 +620,26 @@ packages:
     resolution: {integrity: sha512-zmPitbQ8+6zNutpwgcQuLcsEpn/Cj54Kbn7L5pX0Os5kdWplB7xPgEh/g+SWOB/qmows2gpuCaPyduq8ZZRnxA==}
     deprecated: This is a stub types definition. minimatch provides its own type definitions, so you do not need this installed.
 
+  '@types/node@17.0.45':
+    resolution: {integrity: sha512-w+tIMs3rq2afQdsPJlODhoUEKzFP1ayaoyl1CcnwtIlsVe7K7bA1NGm4s3PraqTLlXnbIN84zuBlxBWo1u9BLw==}
+
   '@types/node@24.0.12':
     resolution: {integrity: sha512-LtOrbvDf5ndC9Xi+4QZjVL0woFymF/xSTKZKPgrrl7H7XoeDvnD+E2IclKVDyaK9UM756W/3BXqSU+JEHopA9g==}
+
+  '@types/offscreencanvas@2019.7.3':
+    resolution: {integrity: sha512-ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A==}
 
   '@types/resolve@1.20.2':
     resolution: {integrity: sha512-60BCwRFOZCQhDncwQdxxeOEEkbc5dIMccYLwbxsS4TUNeVECQ/pBJ0j09mrHOl/JJvpRPGwO9SvE4nR2Nb/a4Q==}
 
   '@types/stack-utils@2.0.3':
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
+
+  '@types/uuid@8.3.4':
+    resolution: {integrity: sha512-c/I8ZRb51j+pYGAu5CrFMRxqZ2ke4y2grEBO5AUjgSkSk+qT2Ea+OdWElz/OiMf5MNpn2b17kuVBwZLQJXzihw==}
+
+  '@types/uuid@9.0.8':
+    resolution: {integrity: sha512-jg+97EGIcY9AGHJJRaaPVgetKDsrTgbRjQ5Msgjh/DQKEFl0DtyRr/VCOyD1T2R1MNeWPK/u7JoGhlDZnKBAfA==}
 
   '@types/yargs-parser@21.0.3':
     resolution: {integrity: sha512-I4q9QU9MQv4oEOz4tAHJtNz1cwuLxn2F3xcc2iV5WdqLPpUnj30aUuxt1mAxYTG+oe8CZMV/+6rU4S4gRDzqtQ==}
@@ -723,6 +747,18 @@ packages:
     resolution: {integrity: sha512-lrW200hZdbfRtztbygyaq/6jP6AKE8qQN2KvPcJ+x7wiD038YtnYtZ82IMNJ69GJibV7bwL3y9FgK+5w/pYt6g==}
     cpu: [x64]
     os: [win32]
+
+  '@vonage/js-onewebrtc-telemetry@1.1.4':
+    resolution: {integrity: sha512-sLxGLvHMClFnffJ0jHM1n/WuwvFK9gXGoEu4HZcXS+wjQjL5TmqylFFCQaQfopTwP6r1zG3yZNhxmvJ7KqJG3A==}
+
+  '@vonage/js-workerizer@1.2.3':
+    resolution: {integrity: sha512-NmDTm+rS9x3ZNin1KRJDU4uOQgyEl4IXgBH2zSqWfr3FvHQbKUA29KqshGo4bXxPcfUeYWXWk5I6VNjh2+YBhQ==}
+
+  '@vonage/media-processor@2.0.4':
+    resolution: {integrity: sha512-vNKs/VXKBulQKRBDA5gyk5izXPAoXqLLc47Qf3w7OEIqZeRXOOxEnf1cSbawtqA2dLodxfm0gxs/2s+lNlFOOg==}
+
+  '@vonage/noise-suppression@1.0.3':
+    resolution: {integrity: sha512-pwA6lX1HissVWktpA/rgm+nY+NqnCcPWsQOpadeJoUFhTC+HHji2TGd2NAG637Do+3IMmZPZ6sifkT5qB43lfg==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1063,9 +1099,17 @@ packages:
   electron-to-chromium@1.5.182:
     resolution: {integrity: sha512-Lv65Btwv9W4J9pyODI6EWpdnhfvrve/us5h1WspW8B2Fb0366REPtY3hX7ounk1CkV/TBjWCEvCBBbYbmV0qCA==}
 
+  emittery@0.10.2:
+    resolution: {integrity: sha512-aITqOwnLanpHLNXZJENbOgjUBeHocD+xsSJmNrjovKBW5HbSpW3d1pEls7GFQPUWXiwG9+0P4GtHfEqC/4M0Iw==}
+    engines: {node: '>=12'}
+
   emittery@0.13.1:
     resolution: {integrity: sha512-DeWwawk6r5yR9jFgnDKYt4sLS0LmHJJi3ZOnb5/JdbYwj3nW+FxQnHIjhBKz8YLC7oRNPVM9NQ47I3CVx34eqQ==}
     engines: {node: '>=12'}
+
+  emittery@1.2.0:
+    resolution: {integrity: sha512-KxdRyyFcS85pH3dnU8Y5yFUm2YJdaHwcBZWrfG8o89ZY9a13/f9itbN+YG3ELbBo9Pg5zvIozstmuV8bX13q6g==}
+    engines: {node: '>=14.16'}
 
   emoji-regex@8.0.0:
     resolution: {integrity: sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==}
@@ -2138,6 +2182,9 @@ packages:
   typed-query-selector@2.12.0:
     resolution: {integrity: sha512-SbklCd1F0EiZOyPiW192rrHZzZ5sBijB6xM+cpmrwDqObvdtunOHHIk9fCGsoK5JVIYXoyEp4iEdE3upFH3PAg==}
 
+  typescript-optional@3.0.0-alpha.3:
+    resolution: {integrity: sha512-X2JbUQA+WK0P8gwiickO6s8yZnX/ufov6zx4hbvdYVqHFTz8fAYoh+8JMKxVzQuh2/aMUvF9KSNqXi4p6pNxuA==}
+
   undici-types@7.8.0:
     resolution: {integrity: sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw==}
 
@@ -2156,6 +2203,10 @@ packages:
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
+
+  uuid@9.0.1:
+    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    hasBin: true
 
   v8-compile-cache@2.4.0:
     resolution: {integrity: sha512-ocyWc3bAHBB/guyqJQVI5o4BZkPhznPYUG2ea80Gond/BgNWpap8TOmLSeeQG7bnh2KMISxskdADG59j7zruhw==}
@@ -2875,6 +2926,14 @@ snapshots:
     dependencies:
       '@babel/types': 7.28.1
 
+  '@types/dom-mediacapture-transform@0.1.11':
+    dependencies:
+      '@types/dom-webcodecs': 0.1.16
+
+  '@types/dom-webcodecs@0.1.16': {}
+
+  '@types/emscripten@1.40.1': {}
+
   '@types/estree@1.0.8': {}
 
   '@types/fs-extra@8.1.5':
@@ -2905,13 +2964,21 @@ snapshots:
     dependencies:
       minimatch: 10.0.3
 
+  '@types/node@17.0.45': {}
+
   '@types/node@24.0.12':
     dependencies:
       undici-types: 7.8.0
 
+  '@types/offscreencanvas@2019.7.3': {}
+
   '@types/resolve@1.20.2': {}
 
   '@types/stack-utils@2.0.3': {}
+
+  '@types/uuid@8.3.4': {}
+
+  '@types/uuid@9.0.8': {}
 
   '@types/yargs-parser@21.0.3': {}
 
@@ -2984,6 +3051,35 @@ snapshots:
 
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
+
+  '@vonage/js-onewebrtc-telemetry@1.1.4':
+    dependencies:
+      '@types/uuid': 9.0.8
+      '@vonage/js-workerizer': 1.2.3
+      emittery: 1.2.0
+      uuid: 9.0.1
+
+  '@vonage/js-workerizer@1.2.3':
+    dependencies:
+      emittery: 1.2.0
+
+  '@vonage/media-processor@2.0.4':
+    dependencies:
+      '@types/dom-mediacapture-transform': 0.1.11
+      '@types/emscripten': 1.40.1
+      '@types/node': 17.0.45
+      '@types/offscreencanvas': 2019.7.3
+      '@types/uuid': 8.3.4
+      '@vonage/js-onewebrtc-telemetry': 1.1.4
+      emittery: 0.10.2
+      typescript-optional: 3.0.0-alpha.3
+      uuid: 9.0.1
+
+  '@vonage/noise-suppression@1.0.3':
+    dependencies:
+      '@vonage/js-workerizer': 1.2.3
+      '@vonage/media-processor': 2.0.4
+      emittery: 1.2.0
 
   acorn-jsx@5.3.2(acorn@7.4.1):
     dependencies:
@@ -3301,7 +3397,11 @@ snapshots:
 
   electron-to-chromium@1.5.182: {}
 
+  emittery@0.10.2: {}
+
   emittery@0.13.1: {}
+
+  emittery@1.2.0: {}
 
   emoji-regex@8.0.0: {}
 
@@ -4592,6 +4692,8 @@ snapshots:
 
   typed-query-selector@2.12.0: {}
 
+  typescript-optional@3.0.0-alpha.3: {}
+
   undici-types@7.8.0: {}
 
   universalify@0.1.2: {}
@@ -4629,6 +4731,8 @@ snapshots:
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
+
+  uuid@9.0.1: {}
 
   v8-compile-cache@2.4.0: {}
 

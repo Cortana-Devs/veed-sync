@@ -1641,6 +1641,23 @@ export default class Renderer {
     this.postFX = Object.assign({}, this.postFX, partial);
   }
 
+  // Artistic scene helpers
+  applySceneWater() {
+    this.setModelEffectsEnabled(false);
+    this.setPostFX({ tonemap: 0.9, exposure: 0.05, saturation: -0.05, tint: [0.92, 1.05, 1.08] });
+  }
+
+  applySceneBeach() {
+    this.setModelEffectsEnabled(false);
+    this.applyVibe('sunset_beach');
+  }
+
+  applySceneParty() {
+    this.setModelEffectsEnabled(true);
+    this.configureParticles?.({ maxCount: 1200 });
+    this.setPostFX({ saturation: 0.25, contrast: 0.12, grain: 0.18, tint: [1.02, 1.0, 1.08] });
+  }
+
   // Inject beat synchronizer
   setBeatSync(instance) {
     this.beatSync = instance || null;

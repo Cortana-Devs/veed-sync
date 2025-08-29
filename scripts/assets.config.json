@@ -1,0 +1,10 @@
+{
+  "images": [
+    { "category": "water", "query": "water caustics texture", "limit": 6 },
+    { "category": "beach", "query": "beach sand texture", "limit": 6 },
+    { "category": "sky", "query": "sunset sky clouds", "limit": 6 },
+    { "category": "party", "query": "bokeh lights", "limit": 6 }
+  ]
+}
+
+
