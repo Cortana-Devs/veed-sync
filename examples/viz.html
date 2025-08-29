@@ -16,7 +16,23 @@
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js" crossorigin="anonymous"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js" crossorigin="anonymous"></script>
   <script type="module">
-    import veedSync from '../dist/veed-sync.min.js';
+    async function loadVeedSyncModule() {
+      const candidates = [
+        '../dist/veed-sync.min.js',
+        '../dist/veed-sync.js',
+        '/dist/veed-sync.min.js',
+        '/dist/veed-sync.js',
+        'https://cdn.jsdelivr.net/gh/chamaththiwanka/veed-sync@main/dist/veed-sync.min.js',
+      ];
+      for (const url of candidates) {
+        try {
+          const mod = await import(url);
+          if (mod && (mod.default || mod.createVisualizer)) return mod.default || mod;
+        } catch (_) {}
+      }
+      throw new Error('Failed to load veed-sync module');
+    }
+    const veedSync = await loadVeedSyncModule();
     const _ = (window._ || window.lodash || { throttle: (fn, wait = 100) => {
       let last = 0, t;
       return (...args) => {
@@ -1008,8 +1024,18 @@
       presets = {};
       await ensurePresetGlobals();
       loadDisabled();
-      if (window.base && window.base.default) Object.assign(presets, window.base.default);
-      if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
+      // Prefer unified butterchurnPresets if present
+      try {
+        const bc = (window.butterchurnPresets && window.butterchurnPresets.getPresets)
+          ? window.butterchurnPresets
+          : (window.butterchurnPresets && window.butterchurnPresets.default && window.butterchurnPresets.default.getPresets ? window.butterchurnPresets.default : null);
+        if (bc && bc.getPresets) {
+          Object.assign(presets, bc.getPresets());
+        }
+      } catch(_) {}
+      // Also merge base/extra globals if available
+      if (window.base && (window.base.default || typeof window.base === 'object')) Object.assign(presets, window.base.default || window.base);
+      if (window.extra && (window.extra.default || typeof window.extra === 'object')) Object.assign(presets, window.extra.default || window.extra);
       // Optionally add a few classic local presets shipped in repo
       const mergeClassic = async () => {
         if (!includeClassicLocal) return;
@@ -1033,8 +1059,16 @@
       async function rebuildPresets(newOnly){
         presets = {};
         if (!newOnly) {
-          if (window.base && window.base.default) Object.assign(presets, window.base.default);
-          if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
+          try {
+            const bc = (window.butterchurnPresets && window.butterchurnPresets.getPresets)
+              ? window.butterchurnPresets
+              : (window.butterchurnPresets && window.butterchurnPresets.default && window.butterchurnPresets.default.getPresets ? window.butterchurnPresets.default : null);
+            if (bc && bc.getPresets) {
+              Object.assign(presets, bc.getPresets());
+            }
+          } catch(_) {}
+          if (window.base && (window.base.default || typeof window.base === 'object')) Object.assign(presets, window.base.default || window.base);
+          if (window.extra && (window.extra.default || typeof window.extra === 'object')) Object.assign(presets, window.extra.default || window.extra);
         }
         try {
           const res = await fetch('../assets/new-presets/index.json', { cache: 'no-cache' });
@@ -1061,6 +1095,17 @@
         entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
         presets = Object.fromEntries(entries);
         presetKeys = entries.map(([k]) => k);
+      }
+      // Ensure at least one preset exists (fallback to local blank preset)
+      if (!presetKeys || presetKeys.length === 0) {
+        try {
+          const mod = await import('../src/blankPreset.js');
+          const def = (mod && mod.default) ? mod.default : null;
+          if (def) {
+            presets = { 'Default Preset': def };
+            presetKeys = ['Default Preset'];
+          }
+        } catch(_) {}
       }
       presetIndex = Math.floor(Math.random() * presetKeys.length);
 
@@ -1109,8 +1154,10 @@
         } catch(_) {}
       }
       try {
-        visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
-        showPresetToast(presetKeys[presetIndex]);
+        const key = presetKeys[presetIndex];
+        if (!key) throw new Error('No presets available');
+        visualizer.loadPreset(presets[key], 0);
+        showPresetToast(key);
       } catch (e) {
         console.error('Failed to load preset', e);
         showToast('Failed to load preset', true);
