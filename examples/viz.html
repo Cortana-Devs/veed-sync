@@ -27,7 +27,9 @@
     let tapNode = null;
     let internalMethod = localStorage.getItem('internalMethod') || 'auto'; // auto | tab | element
     let tabStream = null;
+    let tabCaptureStarting = false;
     let htmlAudioEl = null;
+    let htmlAudioSrcNode = null;
     // Mic chain references
     let micStream = null;
     let micSourceNode = null;
@@ -340,6 +342,50 @@
       return audioContext;
     }
 
+    async function resolveSampleURL() {
+      const candidates = [
+        '../assets/audio/aatma-rama.mp3',
+        '../audio/aatma-rama.mp3',
+        '../src/audio/aatma-rama.mp3',
+      ];
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { method: 'HEAD', cache: 'no-cache' });
+          if (res && (res.ok || res.status === 0)) return url;
+        } catch(_) {}
+      }
+      return 'https://cdn.jsdelivr.net/gh/veed-sync/sample-audio/atma-rama.mp3';
+    }
+
+    async function playSampleTrack() {
+      ensureAudioContext();
+      await audioContext.resume().catch(()=>{});
+      // Stop Tab capture to avoid duplicates
+      try { if (tabStream) { tabStream.getTracks().forEach(t=>t.stop()); tabStream = null; } } catch(_) {}
+      // Pause any previous element
+      try { if (htmlAudioEl) { try { htmlAudioEl.pause(); } catch(_) {} } } catch(_) {}
+      htmlAudioEl = new Audio();
+      htmlAudioEl.crossOrigin = 'anonymous';
+      htmlAudioEl.muted = false; htmlAudioEl.volume = 1.0; htmlAudioEl.playsInline = true;
+      htmlAudioEl.src = await resolveSampleURL();
+      htmlAudioEl.loop = true;
+      // Ensure element is in DOM for iOS policies
+      try { if (!htmlAudioEl.parentNode) { htmlAudioEl.style.position='fixed'; htmlAudioEl.style.left='-9999px'; htmlAudioEl.style.width='1px'; htmlAudioEl.style.height='1px'; document.body.appendChild(htmlAudioEl); } } catch(_) {}
+      // (Re)create source node
+      try { if (htmlAudioSrcNode) { try { htmlAudioSrcNode.disconnect(); } catch(_) {} htmlAudioSrcNode = null; } } catch(_) {}
+      htmlAudioSrcNode = audioContext.createMediaElementSource(htmlAudioEl);
+      connectToAudioTap(htmlAudioSrcNode);
+      // Route to speakers
+      try { await htmlAudioEl.play(); } catch(e) { console.error('Autoplay failed', e); }
+      // Apply internal mode visuals & monitoring
+      internalMethod = 'element'; try { localStorage.setItem('internalMethod','element'); } catch(_) {}
+      syncAudioControls('internal', 'element');
+      try { localStorage.setItem('monitorAudio','1'); } catch(_) {}
+      try { if (tapNode && audioContext?.destination) { try { tapNode.disconnect(audioContext.destination); } catch(_) {} tapNode.connect(audioContext.destination); } } catch(_) {}
+      if (visualizer?.renderer?.setMicActive) { visualizer.renderer.setMicActive(false, 1.5); }
+      showToast('Playing sample: Atma Rama');
+    }
+
     function connectToAudioTap(node) {
       ensureAudioContext();
       if (!tapNode) {
@@ -350,8 +396,9 @@
         analyser.fftSize = 2048;
         levelArray = new Uint8Array(analyser.frequencyBinCount);
         tapNode.connect(analyser);
-        // Route to destination based on monitor toggle
-        const monitor = (localStorage.getItem('monitorAudio') || '1') === '1';
+        // Route to destination based on monitor toggle (never monitor Tab Capture)
+        const monitorRequested = (localStorage.getItem('monitorAudio') || '1') === '1';
+        const monitor = monitorRequested && !(internalMethod === 'tab');
         try { tapNode.disconnect(); } catch(_) {}
         tapNode.connect(analyser);
         if (monitor) tapNode.connect(audioContext.destination);
@@ -618,21 +665,36 @@
       // Element audio (if used)
       if (htmlAudioEl && (mode === 'internal' || mode === 'both')) {
         try {
-          const mediaSrc = audioContext.createMediaElementSource(htmlAudioEl);
-          mediaSrc.connect(tapNode);
+          try { htmlAudioSrcNode && htmlAudioSrcNode.disconnect(); } catch(_) {}
+          htmlAudioSrcNode = audioContext.createMediaElementSource(htmlAudioEl);
+          htmlAudioSrcNode.connect(tapNode);
         } catch(_) {}
       }
       // Tab capture handling
       if (internalMethod === 'tab' && (mode === 'internal' || mode === 'both')) {
-        startTabAudioCapture();
+        if (!tabCaptureStarting && !tabStream) startTabAudioCapture();
+        // Ensure no monitoring to avoid duplicated sound
+        try {
+          localStorage.setItem('monitorAudio', '0');
+          if (tapNode && audioContext?.destination) {
+            try { tapNode.disconnect(audioContext.destination); } catch(_) {}
+          }
+        } catch(_) {}
       }
       showToast(`Audio mode: ${mode}`);
     }
 
     async function startTabAudioCapture() {
+      if (tabCaptureStarting) return;
       try {
+        tabCaptureStarting = true;
         ensureAudioContext();
-        audioContext.resume();
+        await audioContext.resume();
+        // Ensure no local element keeps playing when switching to Tab capture
+        try {
+          if (htmlAudioEl) { try { htmlAudioEl.pause(); } catch(_) {} }
+          if (htmlAudioSrcNode) { try { htmlAudioSrcNode.disconnect(); } catch(_) {} htmlAudioSrcNode = null; }
+        } catch(_) {}
         if (tabStream) { try { tabStream.getTracks().forEach(t => t.stop()); } catch(_) {} tabStream = null; }
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false } });
         tabStream = stream;
@@ -643,6 +705,8 @@
       } catch (e) {
         console.error('Tab capture failed', e);
         showToast('Tab capture failed', true);
+      } finally {
+        tabCaptureStarting = false;
       }
     }
 
@@ -1027,40 +1091,46 @@
       // Auto-start rendering so the user sees visuals immediately
       try { startRenderer(); } catch (_) {}
 
-      // Packs toggles
-      const packBase = document.getElementById('packBase');
-      const packExtra = document.getElementById('packExtra');
-      const classicCb = document.getElementById('settingClassicLocal');
-      const applyPacks = () => {
-        presets = {};
-        if (packBase?.checked && window.base?.default) Object.assign(presets, window.base.default);
-        if (packExtra?.checked && window.extra?.default) Object.assign(presets, window.extra.default);
-        includeClassicLocal = !!classicCb?.checked;
-        try { localStorage.setItem('classicLocal', includeClassicLocal ? '1' : '0'); } catch(_) {}
-        const loadAndRebuild = async () => {
-          if (includeClassicLocal) {
-            const localList = [
-              { name: 'Aderrasi - Mother Of Pearl (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Mother Of Pearl - mash0000 - how to piss off your eyes.json' },
-              { name: 'Aderrasi - Potion of Spirits (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Potion of Spirits.json' },
-              { name: 'Rovastar + Geiss - Hurricane Nightmare (classic)', path: '../experiments/wasm-eel/presets/_Rovastar + Geiss - Hurricane Nightmare (Posterize Mix).json' }
-            ];
-            for (const item of localList) {
-              try { const res = await fetch(encodeURI(item.path)); if (res.ok) presets[item.name] = await res.json(); } catch(_) {}
-            }
+      // Preset chips inside playlist panel
+      const chipBase = document.getElementById('chipBase');
+      const chipExtra = document.getElementById('chipExtra');
+      const chipNewOnly = document.getElementById('chipNewOnly');
+      const presetSearch = document.getElementById('presetSearch');
+      function applyPresetChips(){
+        const newOnly = !!chipNewOnly?.checked;
+        localStorage.setItem('newPresetsOnly', newOnly ? '1' : '0');
+        const state = { base: !!chipBase?.checked, extra: !!chipExtra?.checked };
+        localStorage.setItem('packsBase', state.base ? '1' : '0');
+        localStorage.setItem('packsExtra', state.extra ? '1' : '0');
+        const doRebuild = async () => {
+          presets = {};
+          if (!newOnly) {
+            if (state.base && window.base?.default) Object.assign(presets, window.base.default);
+            if (state.extra && window.extra?.default) Object.assign(presets, window.extra.default);
           }
+          try {
+            const res = await fetch('../assets/new-presets/index.json', { cache: 'no-cache' });
+            if (res.ok) {
+              const list = await res.json();
+              for (const item of list) { try { const r = await fetch(encodeURI(item.path)); if (r.ok) presets[item.name] = await r.json(); } catch(_) {} }
+            }
+          } catch(_) {}
           const entries = Object.entries(presets);
-          entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
-          presets = Object.fromEntries(entries);
-          presetKeys = entries.map(([k]) => k);
+          entries.sort((a,b)=>a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
+          presets = Object.fromEntries(entries); presetKeys = entries.map(([k])=>k);
           presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
           buildPlaylist();
-          showToast('Preset packs updated');
+          showToast('Presets updated');
         };
-        loadAndRebuild();
-      };
-      packBase?.addEventListener('change', applyPacks);
-      packExtra?.addEventListener('change', applyPacks);
-      if (classicCb) { classicCb.checked = includeClassicLocal; classicCb.addEventListener('change', applyPacks); }
+        doRebuild();
+      }
+      if (chipBase) chipBase.checked = (localStorage.getItem('packsBase') || '1') === '1';
+      if (chipExtra) chipExtra.checked = (localStorage.getItem('packsExtra') || '1') === '1';
+      if (chipNewOnly) chipNewOnly.checked = (localStorage.getItem('newPresetsOnly') || '0') === '1';
+      chipBase?.addEventListener('change', applyPresetChips);
+      chipExtra?.addEventListener('change', applyPresetChips);
+      chipNewOnly?.addEventListener('change', applyPresetChips);
+      presetSearch?.addEventListener('input', (e)=>{ presetSearchTerm = (e.target.value||'').toLowerCase(); buildPlaylist(); });
       // Try to load models index for the Models panel
       try {
         const res = await fetch('../assets/models/index.json', { cache: 'no-cache' });
@@ -1093,6 +1163,83 @@
       initLuminanceProbe();
       // Init dancers
       Dancers.init();
+
+      // Starter overlay logic
+      const starter = document.getElementById('starter');
+      const firstRunKey = 'starterSeenV1';
+      const seen = localStorage.getItem(firstRunKey) === '1';
+      if (!seen) { starter.classList.add('open'); }
+
+      // Always wire starter handlers so Audio menu works anytime
+      (function wireStarterHandlers(){
+        const det = document.getElementById('starterDetect');
+        const mic = document.getElementById('starterMic');
+        const samp = document.getElementById('starterSample');
+        if (det && !det.dataset.wired) {
+          det.dataset.wired = '1';
+          det.addEventListener('click', async () => {
+            try { localStorage.setItem(firstRunKey, '1'); } catch(_) {}
+            internalMethod = 'tab'; try { localStorage.setItem('internalMethod', 'tab'); } catch(_) {}
+            hideStarter(); startRenderer();
+            try { if (!tabCaptureStarting && !tabStream) await startTabAudioCapture(); } catch(_) {}
+            applyAudioMode('internal');
+            syncAudioControls('internal', 'tab');
+            setMonitorEnabled(false);
+          });
+        }
+        if (mic && !mic.dataset.wired) {
+          mic.dataset.wired = '1';
+          mic.addEventListener('click', async () => {
+            try { localStorage.setItem(firstRunKey, '1'); } catch(_) {}
+            applyAudioMode('mic');
+            if (visualizer?.renderer?.setMicActive) { visualizer.renderer.setMicActive(true, 1.8); }
+            syncAudioControls('mic', localStorage.getItem('internalMethod') || 'auto');
+            hideStarter(); startRenderer();
+          });
+        }
+        if (samp && !samp.dataset.wired) {
+          samp.dataset.wired = '1';
+          samp.addEventListener('click', async () => {
+            try { localStorage.setItem(firstRunKey, '1'); } catch(_) {}
+            try { await playSampleTrack(); } catch(e) { console.error('Failed to start sample', e); showToast('Sample unavailable', true); return; }
+            hideStarter(); startRenderer();
+          });
+        }
+      })();
+
+      function hideStarter(){ try { starter.classList.remove('open'); starter.setAttribute('aria-hidden','true'); } catch(_) {} }
+      function showStarter(){ try { starter.classList.add('open'); starter.setAttribute('aria-hidden','false'); } catch(_) {} }
+      function syncAudioControls(mode, method){
+        try {
+          const audioModeSel = document.getElementById('settingAudioMode');
+          const internalMethodSel = document.getElementById('settingInternalMethod');
+          if (audioModeSel && typeof mode === 'string') audioModeSel.value = mode;
+          if (internalMethodSel && typeof method === 'string') internalMethodSel.value = method;
+        } catch(_) {}
+      }
+      function setMonitorEnabled(on){
+        try { localStorage.setItem('monitorAudio', on ? '1' : '0'); } catch(_) {}
+        try {
+          if (tapNode && audioContext?.destination) {
+            try { tapNode.disconnect(audioContext.destination); } catch(_) {}
+            if (on && internalMethod !== 'tab') tapNode.connect(audioContext.destination);
+          }
+        } catch(_) {}
+      }
+      function closeAllPanels(except) {
+        try { if (except !== 'settings') settingsPanel.classList.remove('open'); } catch(_) {}
+        try { if (except !== 'playlist') playlistPanel.classList.remove('open'); } catch(_) {}
+        try { if (except !== 'starter') document.getElementById('starter').classList.remove('open'); } catch(_) {}
+      }
+      const starterOpenBtn = document.getElementById('starterOpenBtn');
+      if (starterOpenBtn) starterOpenBtn.addEventListener('click', () => {
+        const s = document.getElementById('starter');
+        const next = !(s && s.classList.contains('open'));
+        closeAllPanels(next ? 'starter' : '');
+        if (next) showStarter(); else hideStarter();
+      });
+
+      // Bottom bar chips removed; use top-bar Audio (starterOpenBtn)
 
       document.getElementById('micBtn').addEventListener('click', () => {
         if (micConnected) disconnectMic(true); else connectMic();
@@ -1132,8 +1279,10 @@
       });
 
       document.getElementById('playlistBtn').addEventListener('click', () => {
-        playlistPanel.classList.toggle('open');
-        announce(playlistPanel.classList.contains('open') ? 'Opened preset list' : 'Closed preset list');
+        const next = !playlistPanel.classList.contains('open');
+        closeAllPanels(next ? 'playlist' : '');
+        if (next) playlistPanel.classList.add('open');
+        announce(next ? 'Opened preset list' : 'Closed preset list');
       });
       // Quick dance toggle button
       const danceBtn = document.getElementById('danceBtn');
@@ -1181,8 +1330,10 @@
       }
 
       document.getElementById('settingsBtn').addEventListener('click', () => {
-        settingsPanel.classList.toggle('open');
-        announce(settingsPanel.classList.contains('open') ? 'Opened settings' : 'Closed settings');
+        const next = !settingsPanel.classList.contains('open');
+        closeAllPanels(next ? 'settings' : '');
+        if (next) settingsPanel.classList.add('open');
+        announce(next ? 'Opened settings' : 'Closed settings');
       });
       // Progressive disclosure toggle
       const advBtn = document.getElementById('toggleAdvanced');
@@ -1427,7 +1578,9 @@
             if (tapNode) {
               tapNode.disconnect();
               tapNode.connect(analyser);
-              if (e.target.checked && audioContext?.destination) tapNode.connect(audioContext.destination);
+              // Never monitor tab capture to avoid duplicate playback
+              const allow = e.target.checked && internalMethod !== 'tab';
+              if (allow && audioContext?.destination) tapNode.connect(audioContext.destination);
             }
           } catch (_) {}
           showToast(`Monitor ${e.target.checked ? 'on' : 'off'}`);
@@ -1459,7 +1612,7 @@
           localStorage.setItem('internalMethod', internalMethod);
           showToast(`Internal source: ${internalMethod}`);
           if (internalMethod === 'tab' && (audioModeSel?.value === 'internal' || audioModeSel?.value === 'both')) {
-            startTabAudioCapture();
+            if (!tabCaptureStarting && !tabStream) startTabAudioCapture();
           }
         });
       }
@@ -1564,7 +1717,22 @@
       });
 
       // Top bar actions
-      document.getElementById('extensionsBtn').addEventListener('click', () => openModal('packsModal'));
+      // Extensions button opens Presets panel now
+      document.getElementById('extensionsBtn').addEventListener('click', () => {
+        try { document.getElementById('playlistPanel').classList.add('open'); } catch(_) {}
+      });
+      // Settings tabs wiring
+      (function wireSettingsTabs(){
+        const tabs = Array.from(document.querySelectorAll('#settingsPanel .tab'));
+        function showTab(name){
+          tabs.forEach(t=>{ if (t.dataset.tab === name) { t.classList.add('active'); t.setAttribute('aria-selected','true'); } else { t.classList.remove('active'); t.setAttribute('aria-selected','false'); } });
+          const blocks = Array.from(document.querySelectorAll('#settingsPanel .tab-content, #settingsPanel > h4, #settingsPanel > .scene-grid, #settingsPanel > .setting-row, #settingsPanel > .row, #settingsPanel > .divider'));
+          // Simple approach: hide all tab-content blocks not matching, keep headings inside each tab-content
+          blocks.forEach(b=>{ if (b.classList.contains('tab-content')) { b.hidden = (b.dataset.tab !== name); } });
+        }
+        tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+        showTab('general');
+      })();
       document.getElementById('aboutBtn').addEventListener('click', () => openModal('aboutModal'));
       const modelsBtn = document.getElementById('modelsBtn');
       if (modelsBtn) {
@@ -1580,10 +1748,13 @@
           }
         });
       }
-      // Kick off initialization last and handle failures gracefully
+      // Kick off initialization after UI is ready so starter can decide mode
       (async () => {
         try {
           await initPlayer();
+          // If starter already chosen a mode earlier, apply it immediately
+          const storedMode = localStorage.getItem('audioMode') || 'internal';
+          applyAudioMode(storedMode);
         } catch (e) {
           console.error('Visualizer init failed', e);
           showToast('Initialization failed', true);
@@ -1762,6 +1933,15 @@
     /* Premium small/secondary variants */
     .btn.small { width: auto; height: 32px; min-width: 36px; padding: 0 12px; border-radius: 10px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.16); }
     .btn.secondary { background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04)); border-color: rgba(255,255,255,0.14); }
+    /* Calmer glass tuning */
+    #topbar::before, #bottombar::before { filter: blur(calc(var(--glass-blur) * 0.7)); opacity: 0.9; }
+    #topbar::after, #bottombar::after { opacity: 0.35; }
+    /* Mode chip group */
+    .mode-group { display: inline-flex; gap: 8px; background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 4px; box-shadow: 0 10px 24px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.16); }
+    .mode-chip { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px; cursor: pointer; color: var(--bar-fg); background: transparent; border: 0; }
+    .mode-chip i { font-size: 14px; }
+    .mode-chip.active { background: linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.22); }
+    @media (max-width: 640px) { .mode-chip span { display: none; } }
     .btn.small.secondary { box-shadow: 0 6px 18px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.14); }
     /* Mic active state: greenish glow + inverted icon */
     .btn.mic-on {
@@ -2011,6 +2191,27 @@
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
     #toast.error { background: rgba(160,30,30,0.95); }
 
+    /* Starter overlay */
+    #starter { position: fixed; inset: 56px 16px 70px 16px; z-index: 14; display: none; place-items: center; }
+    #starter.open { display: grid; }
+    .starter-card { width: min(94vw, 320px); background:
+      linear-gradient(135deg, rgba(0,0,0, var(--panel-darken)), rgba(0,0,0, var(--panel-darken))),
+      linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+      border: 1px solid rgba(255,255,255,0.16); border-radius: 16px; color: var(--bar-fg); overflow: hidden; cursor: pointer;
+      box-shadow: 0 22px 48px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.18);
+      display: grid; grid-template-rows: 140px auto; text-align: left; transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .starter-card:hover { transform: translateY(-2px); box-shadow: 0 26px 56px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.22); }
+    .starter-cover { background-size: cover; background-position: center; border-bottom: 1px solid rgba(255,255,255,0.12); }
+    .starter-body { padding: 12px; display: grid; gap: 6px; }
+    .starter-title { font-weight: 700; font-size: 16px; }
+    .starter-sub { font-size: 12px; opacity: .85; }
+    .starter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .starter-wrap { width: min(1000px, 96vw); margin: 0 auto; text-align: center; }
+    .starter-head { font-size: 18px; font-weight: 700; margin-bottom: 12px; opacity: .95; }
+    .starter-note { font-size: 12px; opacity: .8; margin-top: 10px; }
+    @media (max-width: 880px) { .starter-grid { grid-template-columns: 1fr; } }
+
     /* Level meter */
     .level-wrap { width: 120px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
     .level { height: 100%; width: 0%; background: linear-gradient(90deg, #5bff8a, #ffd76a); }
@@ -2058,6 +2259,9 @@
     #settingsPanel .advanced { display: none; }
     #settingsPanel.show-advanced .advanced { display: flex; }
     .advanced-toggle { margin: 8px 0 12px; display: inline-block; font-size: 12px; opacity: .92; cursor: pointer; }
+    .tabbar { display: flex; gap: 8px; align-items: center; }
+    .tab { height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.14); background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); color: var(--bar-fg); cursor: pointer; }
+    .tab.active { background: linear-gradient(135deg, rgba(255,255,255,0.24), rgba(255,255,255,0.10)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.20); }
   </style>
 </head>
 <body>
@@ -2070,6 +2274,7 @@
       <i id="extensionsBtn" class="fa-solid fa-puzzle-piece" title="Preset packs"></i>
       <i id="aboutBtn" class="fa-regular fa-circle-question" title="About"></i>
       <i id="modelsBtn" class="fa-solid fa-cubes" title="Models"></i>
+      <i id="starterOpenBtn" class="fa-solid fa-sliders" title="Audio mode"></i>
       <span id="gpuBadge" class="gpu-badge" title="Graphics backend">Detecting…</span>
     </div>
   </div>
@@ -2085,6 +2290,37 @@
   <div id="stage">
     <canvas id="canvas"></canvas>
     <div id="dancersLayer" aria-hidden="true"></div>
+  </div>
+
+  <!-- Starter overlay -->
+  <div id="starter" aria-hidden="true">
+    <div class="starter-wrap">
+      <div class="starter-head">Choose how to listen</div>
+      <div class="starter-grid">
+        <div id="starterDetect" class="starter-card" role="button" tabindex="0">
+          <div class="starter-cover" style="background-image:url('https://images.unsplash.com/photo-1526470608268-f674ce90ebd4?q=80&w=1200&auto=format&fit=crop');"></div>
+          <div class="starter-body">
+            <div class="starter-title">Currently Playing Music Detection</div>
+            <div class="starter-sub">Capture audio from this tab or system</div>
+          </div>
+        </div>
+        <div id="starterMic" class="starter-card" role="button" tabindex="0">
+          <div class="starter-cover" style="background-image:url('https://images.unsplash.com/photo-1511379938547-c1f69419868d?q=80&w=1200&auto=format&fit=crop');"></div>
+          <div class="starter-body">
+            <div class="starter-title">Mic Mode</div>
+            <div class="starter-sub">Use your microphone for live input</div>
+          </div>
+        </div>
+        <div id="starterSample" class="starter-card" role="button" tabindex="0">
+          <div class="starter-cover" style="background-image:url('https://images.unsplash.com/photo-1483412033650-1015ddeb83d1?q=80&w=1200&auto=format&fit=crop');"></div>
+          <div class="starter-body">
+            <div class="starter-title">Sample Track: Atma Rama</div>
+            <div class="starter-sub">Debosmita Deb, CHANDAN JAISWAL & Vickky Agarwal • 2025</div>
+          </div>
+        </div>
+      </div>
+      <div class="starter-note">You can change mode anytime in Settings.</div>
+    </div>
   </div>
 
   <div id="bottombar">
@@ -2113,7 +2349,14 @@
 
   <div id="settingsPanel">
     <h4>Settings</h4>
-    <div><button id="toggleAdvanced" class="btn small secondary advanced-toggle">Show advanced</button></div>
+    <div class="tabbar" role="tablist" aria-label="Settings tabs">
+      <button class="tab active" data-tab="general" role="tab" aria-selected="true">General</button>
+      <button class="tab" data-tab="visuals" role="tab">Visuals</button>
+      <button class="tab" data-tab="motion" role="tab">Motion</button>
+      <button class="tab" data-tab="audio" role="tab">Audio</button>
+      <button class="tab" data-tab="advanced" role="tab">Advanced</button>
+    </div>
+    <div class="divider"></div>
 
     <h4 style="margin-top:10px">Scenes</h4>
     <div class="scene-grid">
@@ -2209,6 +2452,14 @@
 
   <div id="playlistPanel">
     <h4>Presets</h4>
+    <div class="panel-controls">
+      <div class="group">
+        <label class="chip-toggle"><input type="checkbox" id="chipBase" checked>Base</label>
+        <label class="chip-toggle"><input type="checkbox" id="chipExtra" checked>Extra</label>
+        <label class="chip-toggle"><input type="checkbox" id="chipNewOnly">New only</label>
+      </div>
+      <input type="text" id="presetSearch" class="search" placeholder="Search presets…" />
+    </div>
     <ul id="presetList"></ul>
   </div>
 
@@ -2222,18 +2473,7 @@
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="live" class="sr-only" aria-live="polite" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">Ready</div>
 
-  <!-- Packs Modal -->
-  <div id="packsModal" class="modal" aria-hidden="true">
-    <div class="modal-card">
-      <h3>Preset Packs</h3>
-      <div class="row"><label>Base</label><input id="packBase" type="checkbox" checked /></div>
-      <div class="row"><label>Extra</label><input id="packExtra" type="checkbox" checked /></div>
-      <div style="font-size:12px;opacity:.8;margin-top:6px;">Toggle which preset packs are available in the playlist.</div>
-      <div class="modal-actions">
-        <button class="btn" onclick="document.getElementById('packsModal').classList.remove('open')">Close</button>
-      </div>
-    </div>
-  </div>
+  <!-- Packs Modal removed in favor of chips inside Presets panel -->
 
   <!-- About Modal -->
   <div id="aboutModal" class="modal" aria-hidden="true">
