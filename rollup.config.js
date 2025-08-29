@@ -23,13 +23,13 @@ const baseConfig = {
 };
 
 const configs = [
-  // Main butterchurn bundle
+  // Main veed-sync bundle
   {
     ...baseConfig,
     input: 'src/index.js',
     output: [
       {
-        file: isProduction ? 'dist/butterchurn.min.js' : 'dist/butterchurn.js',
+        file: isProduction ? 'dist/veed-sync.min.js' : 'dist/veed-sync.js',
         format: 'es',
         sourcemap: true,
       },

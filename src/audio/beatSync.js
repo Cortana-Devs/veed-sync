@@ -27,7 +27,7 @@ export default class BeatSync {
 
   setConfig({ sensitivity, threshold, expectedBpm, meter } = {}) {
     // Sensitivity controls how much spectral flux must exceed its rolling mean
-    this.sensitivity = Math.max(0.5, Math.min(3.0, sensitivity || 1.2));
+    this.sensitivity = Math.max(0.5, Math.min(3.0, sensitivity || 1.0));
     // Base threshold multiplier
     this.threshold = Math.max(0.5, Math.min(3.0, threshold || 1.0));
     if (expectedBpm) {
@@ -71,13 +71,13 @@ export default class BeatSync {
     // Rolling stats for adaptive threshold
     const m = this.thresholdState;
     // Welford update for mean/variance (slowly varying)
-    const alpha = 0.02; // smoothing for threshold baseline
+    const alpha = 0.01; // slower baseline for calmer detection
     const delta = flux - m.mean;
     m.mean += alpha * delta;
     m.var = (1 - alpha) * (m.var + alpha * delta * delta);
     const std = Math.sqrt(Math.max(1e-6, m.var));
 
-    const thresh = m.mean + this.sensitivity * this.threshold * std;
+    const thresh = m.mean + this.sensitivity * this.threshold * (std + 0.002);
     const isOnset = flux > thresh;
     let bandOnsets = [false, false, false];
     if (this.bandRanges) {
@@ -116,8 +116,8 @@ export default class BeatSync {
           // Normalize to reasonable tempo range (factor of 2 ambiguity)
           while (estBpm < 60) estBpm *= 2;
           while (estBpm > 180) estBpm *= 0.5;
-          // Smooth BPM changes
-          this.bpm = 0.9 * this.bpm + 0.1 * estBpm;
+          // Smooth BPM changes (more conservative)
+          this.bpm = 0.95 * this.bpm + 0.05 * estBpm;
           this.period = 60 / this.bpm;
           // Confidence rises with history and stability
           const spread = sorted[Math.floor(sorted.length * 0.75)] - sorted[Math.floor(sorted.length * 0.25)] || 0.001;

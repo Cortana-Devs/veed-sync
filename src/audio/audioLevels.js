@@ -47,11 +47,12 @@ export default class AudioLevels {
 
     // User-configurable response controls
     this.response = {
-      gain: 1.0,              // scales band energy before normalization
+      gain: 1.0,              // base gain
       attack: 0.2,            // 0..1 (faster upwards)
       release: 0.5,           // 0..1 (faster downwards)
       longAvgFast: 0.9,       // boot warm-up
       longAvgSlow: 0.992,     // steady state
+      micBoost: 1.0,          // extra multiplier when source is mic-dominant
     };
   }
 
@@ -107,7 +108,7 @@ export default class AudioLevels {
       }
 
       for (let i = 0; i < 3; i++) {
-        const gain = Math.max(0, this.response.gain || 1.0);
+        const gain = Math.max(0, (this.response.gain || 1.0) * (this.response.micActive ? (this.response.micBoost || 1.0) : 1.0));
         const immScaled = this.imm[i] * gain;
 
         let rate;
@@ -133,11 +134,13 @@ export default class AudioLevels {
   }
 
   // API: Adjust band response
-  setResponse({ gain, attack, release, longAvgFast, longAvgSlow } = {}) {
+  setResponse({ gain, attack, release, longAvgFast, longAvgSlow, micBoost, micActive } = {}) {
     if (Number.isFinite(gain)) this.response.gain = Math.max(0, gain);
     if (Number.isFinite(attack)) this.response.attack = Math.min(0.99, Math.max(0.0, attack));
     if (Number.isFinite(release)) this.response.release = Math.min(0.99, Math.max(0.0, release));
     if (Number.isFinite(longAvgFast)) this.response.longAvgFast = Math.min(0.999, Math.max(0.0, longAvgFast));
     if (Number.isFinite(longAvgSlow)) this.response.longAvgSlow = Math.min(0.9999, Math.max(0.0, longAvgSlow));
+    if (Number.isFinite(micBoost)) this.response.micBoost = Math.max(1.0, Math.min(3.0, micBoost));
+    if (typeof micActive === 'boolean') this.response.micActive = micActive;
   }
 }

@@ -50,7 +50,7 @@ export class SeededRandom {
 
   /**
    * Generate random number in [0, max)
-   * Mimics butterchurn's rand() behavior
+   * Mimics Veed Sync's rand() behavior
    */
   rand(max) {
     if (max < 1) {

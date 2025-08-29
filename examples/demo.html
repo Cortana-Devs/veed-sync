@@ -2,11 +2,11 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Butterchurn Demo</title>
-  <meta name="description" content="Butterchurn Demo Example">
+  <title>Veed Sync Demo</title>
+  <meta name="description" content="Veed Sync Demo Example">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <!-- <script type="text/javascript" src="../dist/butterchurn.js"></script> -->
+  <!-- <script type="text/javascript" src="../dist/veed-sync.js"></script> -->
   <script type="text/javascript" src="https://unpkg.com/lodash"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
@@ -44,7 +44,7 @@
   <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
 
   <script type="module">
-    import butterchurn from 'https://unpkg.com/butterchurn@3.0.0-beta.5/dist/butterchurn.js';
+    import veedSync from '../dist/veed-sync.js';
 
     $(function() {
       var visualizer = null;
@@ -248,7 +248,7 @@
             presetSelect.appendChild(opt);
         }
 
-        visualizer = butterchurn.createVisualizer(audioContext, canvas , {
+        visualizer = veedSync.createVisualizer(audioContext, canvas , {
           width: 800,
           height: 600,
           pixelRatio: window.devicePixelRatio || 1,

@@ -100,7 +100,7 @@ function shuffleArray(array) {
                 }
               </style>
 
-              <script type="text/javascript" src="http://localhost:8000/dist/butterchurn.min.js"></script>
+              <script type="text/javascript" src="http://localhost:8000/dist/veed-sync.min.js"></script>
 
               <script>
                 document.addEventListener("DOMContentLoaded", function(event) {
@@ -108,10 +108,15 @@ function shuffleArray(array) {
                   const frameCount = ${frameCount};
                   const presetStats = []
                   const canvas = document.getElementById('canvas');
-                  const visualizer = butterchurn.default.createVisualizer(null, canvas , {
-                    width: ${width},
-                    height: ${height},
-                  });
+                  const visualizer = (window['veed-sync'] && window['veed-sync'].default && window['veed-sync'].default.createVisualizer)
+                    ? window['veed-sync'].default.createVisualizer(null, canvas , {
+                        width: ${width},
+                        height: ${height},
+                      })
+                    : window['veed-sync'].createVisualizer(null, canvas , {
+                        width: ${width},
+                        height: ${height},
+                      });
 
                   window.loadPreset = (preset) => {
                     visualizer.loadPreset(preset, 0);

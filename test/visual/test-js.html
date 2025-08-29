@@ -17,7 +17,7 @@
     <script type="text/javascript" src="/node_modules/butterchurn-presets-js/lib/butterchurnPresets.min.js"></script>
 
     <script type="module">
-      import butterchurn from '/dist/butterchurn.js';
+      import veedSync from '/dist/veed-sync.js';
 
       document.addEventListener("DOMContentLoaded", function() {
         window.startVisualization = async function(params) {
@@ -27,7 +27,7 @@
           canvas.width = width;
           canvas.height = height;
 
-          const visualizer = butterchurn.createVisualizer(null, canvas, {
+          const visualizer = veedSync.createVisualizer(null, canvas, {
             width: width,
             height: height,
             deterministic: true,

@@ -2,12 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 
-async function renderButterchurn(page, serverUrl, width, height, presetName, audioData, frames, seed = 12345, presetType = 'js') {
-  const butterchurnPath = path.join(process.cwd(), 'dist/butterchurn.js');
-  if (!fs.existsSync(butterchurnPath)) {
+async function renderVeedSync(page, serverUrl, width, height, presetName, audioData, frames, seed = 12345, presetType = 'js') {
+  const veedSyncPath = path.join(process.cwd(), 'dist/veed-sync.js');
+  const veedSyncMinPath = path.join(process.cwd(), 'dist/veed-sync.min.js');
+  if (!fs.existsSync(veedSyncPath) && !fs.existsSync(veedSyncMinPath)) {
     throw new Error(
-      'Butterchurn build not found!\n' +
-      'Please build Butterchurn first:\n' +
+      'Veed Sync build not found!\n' +
+      'Please build Veed Sync first:\n' +
       '  yarn build\n'
     );
   }
@@ -46,5 +47,5 @@ async function renderButterchurn(page, serverUrl, width, height, presetName, aud
 }
 
 export {
-  renderButterchurn
+  renderVeedSync
 };

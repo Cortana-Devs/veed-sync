@@ -1,14 +1,14 @@
 {
-  "name": "butterchurn",
+  "name": "veed-sync",
   "version": "3.0.0-beta.5",
-  "description": "Butterchurn is a WebGL implementation of the Milkdrop Visualizer",
-  "main": "dist/butterchurn.js",
-  "module": "dist/butterchurn.js",
+  "description": "Veed Sync is a modern WebGL music visualizer",
+  "main": "dist/veed-sync.js",
+  "module": "dist/veed-sync.js",
   "type": "module",
-  "unpkg": "dist/butterchurn.js",
+  "unpkg": "dist/veed-sync.js",
   "files": [
-    "dist/butterchurn.js",
-    "dist/butterchurn.min.js",
+    "dist/veed-sync.js",
+    "dist/veed-sync.min.js",
     "dist/isSupported.min.js"
   ],
   "scripts": {
@@ -24,7 +24,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jberg/butterchurn.git"
+    "url": "git+https://github.com/chamaththiwanka/veed-sync.git"
   },
   "keywords": [
     "music visualization",
@@ -32,9 +32,9 @@
     "webgl",
     "webaudio"
   ],
-  "author": "Jordan Berg <jordannealberg@gmail.com>",
+  "author": "Chamath Thiwanka",
   "license": "MIT",
-  "homepage": "https://butterchurnviz.com",
+  "homepage": "https://veedsync.com",
   "dependencies": {
     "@assemblyscript/loader": "^0.17.11",
     "ecma-proposal-math-extensions": "0.0.2",

@@ -2,17 +2,20 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Butterchurn Viz</title>
+  <title>Veed Sync</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
   <link rel="stylesheet" href="https://unpkg.com/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barrio&family=Inter:wght@300..900&display=swap" rel="stylesheet">
 
   <script type="text/javascript" src="https://unpkg.com/lodash"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
   <script type="module">
-    import butterchurn from '../dist/butterchurn.min.js';
+    import veedSync from '../dist/veed-sync.min.js';
 
     let visualizer = null;
     let rendering = false;
@@ -21,6 +24,15 @@
     let sourceNode = null;
     // Unified tap feeding both destination and analysis/visualizer
     let tapNode = null;
+    let internalMethod = localStorage.getItem('internalMethod') || 'auto'; // auto | tab | element
+    let tabStream = null;
+    let htmlAudioEl = null;
+    // Mic chain references
+    let micStream = null;
+    let micSourceNode = null;
+    let micGainNode = null;
+    let micConnected = false;
+    let internalConnected = false;
     let cycleInterval = null;
     let presets = {};
     let presetKeys = [];
@@ -44,6 +56,7 @@
     let userSyncOffsetMs = Number(localStorage.getItem('syncOffsetMs') || '0');
     let modelsIndex = null;
     let pendingTapConnect = false;
+    let includeClassicLocal = (localStorage.getItem('classicLocal') || '1') === '1';
 
     function openModal(id) {
       const el = document.getElementById(id);
@@ -182,10 +195,23 @@
         sourceNode.disconnect();
       }
       ensureAudioContext();
-      sourceNode = audioContext.createBufferSource();
-      sourceNode.buffer = buffer;
-      connectToAudioTap(sourceNode);
-      sourceNode.start(0);
+      if (internalMethod === 'element') {
+        try { htmlAudioEl?.pause?.(); } catch(_) {}
+        htmlAudioEl = new Audio();
+        const blob = new Blob([buffer.getChannelData ? buffer.getChannelData(0).buffer : buffer], { type: 'audio/wav' });
+        // Fallback: when we already have decoded buffer, rebuild via OfflineAudioContext for URL is complex.
+        // So default to bufferSource path when we only have decoded PCM.
+        // Element path will be used when loading file directly (see playFileViaElement).
+        sourceNode = audioContext.createBufferSource();
+        sourceNode.buffer = buffer;
+        connectToAudioTap(sourceNode);
+        sourceNode.start(0);
+      } else {
+        sourceNode = audioContext.createBufferSource();
+        sourceNode.buffer = buffer;
+        connectToAudioTap(sourceNode);
+        sourceNode.start(0);
+      }
       announce('Playing local audio');
     }
 
@@ -195,24 +221,45 @@
       showBusy(true, 'Decoding audio…');
       const reader = new FileReader();
       reader.onload = (event) => {
-        audioContext.decodeAudioData(
-          event.target.result,
-          (buf) => {
-            playBufferSource(buf);
-            setTimeout(() => {
-              if (fileList.length > index + 1) {
-                loadLocalFiles(fileList, index + 1);
-              } else {
-                if (sourceNode) {
-                  sourceNode.disconnect();
-                  sourceNode = null;
+        if (internalMethod === 'element') {
+          try { htmlAudioEl?.pause?.(); } catch(_) {}
+          htmlAudioEl = new Audio();
+          const blob = new Blob([event.target.result]);
+          const url = URL.createObjectURL(blob);
+          htmlAudioEl.src = url;
+          htmlAudioEl.crossOrigin = 'anonymous';
+          htmlAudioEl.autoplay = true;
+          htmlAudioEl.onplay = () => {
+            try {
+              const mediaSrc = audioContext.createMediaElementSource(htmlAudioEl);
+              connectToAudioTap(mediaSrc);
+              showBusy(false);
+              showToast('Now playing (element capture)');
+            } catch (e) {
+              console.warn('Element capture failed, falling back', e);
+            }
+          };
+          htmlAudioEl.play().catch(() => {});
+        } else {
+          audioContext.decodeAudioData(
+            event.target.result,
+            (buf) => {
+              playBufferSource(buf);
+              setTimeout(() => {
+                if (fileList.length > index + 1) {
+                  loadLocalFiles(fileList, index + 1);
+                } else {
+                  if (sourceNode) {
+                    sourceNode.disconnect();
+                    sourceNode = null;
+                  }
                 }
-              }
-            }, buf.duration * 1000);
-            showBusy(false);
-            showToast('Now playing: local file');
-          }
-        );
+              }, buf.duration * 1000);
+              showBusy(false);
+              showToast('Now playing: local file');
+            }
+          );
+        }
       };
       reader.readAsArrayBuffer(fileList[index]);
     }
@@ -226,11 +273,13 @@
       navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
         ensureAudioContext();
         audioContext.resume();
-        const micSourceNode = audioContext.createMediaStreamSource(stream);
-        const gainNode = audioContext.createGain();
-        gainNode.gain.value = 1.25;
-        micSourceNode.connect(gainNode);
-        connectToAudioTap(gainNode);
+        micStream = stream;
+        micSourceNode = audioContext.createMediaStreamSource(stream);
+        micGainNode = audioContext.createGain();
+        micGainNode.gain.value = 1.4; // default boost
+        micSourceNode.connect(micGainNode);
+        connectToAudioTap(micGainNode);
+        micConnected = true;
         startRenderer();
         showToast('Mic connected');
         announce('Microphone connected');
@@ -250,7 +299,9 @@
       } else {
         presetIndex = (presetIndex + 1) % numPresets;
       }
-      visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+      const key = presetKeys[presetIndex];
+      visualizer.loadPreset(presets[key], blendTime);
+      try { visualizer.renderer?.applyStyleFromName?.(key); } catch(_) {}
       highlightActivePreset();
     }
 
@@ -262,7 +313,9 @@
       } else {
         presetIndex = ((presetIndex - 1) + numPresets) % numPresets;
       }
-      visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+      const key = presetKeys[presetIndex];
+      visualizer.loadPreset(presets[key], blendTime);
+      try { visualizer.renderer?.applyStyleFromName?.(key); } catch(_) {}
       highlightActivePreset();
     }
 
@@ -273,6 +326,67 @@
       }
       if (presetCycle) {
         cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
+      }
+    }
+
+    // Audio mode handling
+    function applyAudioMode(mode) {
+      // mode: 'mic' | 'internal' | 'both'
+      localStorage.setItem('audioMode', mode);
+      // Ensure mic initialized if needed
+      if ((mode === 'mic' || mode === 'both') && !micSourceNode) {
+        connectMic();
+      }
+      // Mic routing
+      if (micGainNode) {
+        try { micSourceNode.disconnect(); micSourceNode.connect(micGainNode); } catch(_) {}
+        try { micGainNode.disconnect(); } catch(_) {}
+        if (mode === 'mic' || mode === 'both') {
+          micGainNode.gain.value = (mode === 'mic') ? 1.6 : 1.35; // amplify responsiveness to mic
+          micGainNode.connect(tapNode);
+          micConnected = true;
+        } else {
+          micConnected = false;
+        }
+      }
+      // Internal routing (local file buffer source)
+      if (sourceNode) {
+        try { sourceNode.disconnect(); } catch(_) {}
+        if (mode === 'internal' || mode === 'both') {
+          sourceNode.connect(tapNode);
+          internalConnected = true;
+        } else {
+          internalConnected = false;
+        }
+      }
+      // Element audio (if used)
+      if (htmlAudioEl && (mode === 'internal' || mode === 'both')) {
+        try {
+          const mediaSrc = audioContext.createMediaElementSource(htmlAudioEl);
+          mediaSrc.connect(tapNode);
+        } catch(_) {}
+      }
+      // Tab capture handling
+      if (internalMethod === 'tab' && (mode === 'internal' || mode === 'both')) {
+        startTabAudioCapture();
+      }
+      showToast(`Audio mode: ${mode}`);
+    }
+
+    async function startTabAudioCapture() {
+      try {
+        ensureAudioContext();
+        audioContext.resume();
+        if (tabStream) { try { tabStream.getTracks().forEach(t => t.stop()); } catch(_) {} tabStream = null; }
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false } });
+        tabStream = stream;
+        const tabSource = audioContext.createMediaStreamSource(stream);
+        connectToAudioTap(tabSource);
+        internalConnected = true;
+        showToast('Tab audio capture started');
+      } catch (e) {
+        console.error('Tab capture failed', e);
+        showToast('Tab capture failed', true);
       }
     }
 
@@ -316,7 +430,7 @@
       stopRenderer();
 
       try { visualizer?.loseGLContext?.(); } catch(_) {}
-      visualizer = butterchurn.createVisualizer(audioContext, canvas, {
+      visualizer = veedSync.createVisualizer(audioContext, canvas, {
         width,
         height,
         pixelRatio: window.devicePixelRatio || 1,
@@ -437,6 +551,25 @@
       presets = {};
       if (window.base && window.base.default) Object.assign(presets, window.base.default);
       if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
+      // Optionally add a few classic local presets shipped in repo
+      const mergeClassic = async () => {
+        if (!includeClassicLocal) return;
+        const localList = [
+          { name: 'Aderrasi - Mother Of Pearl (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Mother Of Pearl - mash0000 - how to piss off your eyes.json' },
+          { name: 'Aderrasi - Potion of Spirits (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Potion of Spirits.json' },
+          { name: 'Rovastar + Geiss - Hurricane Nightmare (classic)', path: '../experiments/wasm-eel/presets/_Rovastar + Geiss - Hurricane Nightmare (Posterize Mix).json' }
+        ];
+        for (const item of localList) {
+          try {
+            const res = await fetch(encodeURI(item.path));
+            if (res.ok) {
+              const obj = await res.json();
+              presets[item.name] = obj;
+            }
+          } catch (_) {}
+        }
+      };
+      await mergeClassic();
       // Sort presets case-insensitively without relying on lodash
       {
         const entries = Object.entries(presets);
@@ -451,7 +584,7 @@
       const direct = (localStorage.getItem('directDraw') || '0') === '1';
       const backend = backendPref === 'webgpu-exp' ? 'webgpu' : backendPref;
 
-      visualizer = butterchurn.createVisualizer(audioContext, canvas, {
+      visualizer = veedSync.createVisualizer(audioContext, canvas, {
         width: 800,
         height: 600,
         pixelRatio: window.devicePixelRatio || 1,
@@ -506,20 +639,37 @@
       // Packs toggles
       const packBase = document.getElementById('packBase');
       const packExtra = document.getElementById('packExtra');
+      const classicCb = document.getElementById('settingClassicLocal');
       const applyPacks = () => {
         presets = {};
         if (packBase?.checked && window.base?.default) Object.assign(presets, window.base.default);
         if (packExtra?.checked && window.extra?.default) Object.assign(presets, window.extra.default);
-        const entries = Object.entries(presets);
-        entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
-        presets = Object.fromEntries(entries);
-        presetKeys = entries.map(([k]) => k);
-        presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
-        buildPlaylist();
-        showToast('Preset packs updated');
+        includeClassicLocal = !!classicCb?.checked;
+        try { localStorage.setItem('classicLocal', includeClassicLocal ? '1' : '0'); } catch(_) {}
+        const loadAndRebuild = async () => {
+          if (includeClassicLocal) {
+            const localList = [
+              { name: 'Aderrasi - Mother Of Pearl (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Mother Of Pearl - mash0000 - how to piss off your eyes.json' },
+              { name: 'Aderrasi - Potion of Spirits (classic)', path: '../experiments/wasm-eel/presets/Aderrasi - Potion of Spirits.json' },
+              { name: 'Rovastar + Geiss - Hurricane Nightmare (classic)', path: '../experiments/wasm-eel/presets/_Rovastar + Geiss - Hurricane Nightmare (Posterize Mix).json' }
+            ];
+            for (const item of localList) {
+              try { const res = await fetch(encodeURI(item.path)); if (res.ok) presets[item.name] = await res.json(); } catch(_) {}
+            }
+          }
+          const entries = Object.entries(presets);
+          entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
+          presets = Object.fromEntries(entries);
+          presetKeys = entries.map(([k]) => k);
+          presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
+          buildPlaylist();
+          showToast('Preset packs updated');
+        };
+        loadAndRebuild();
       };
       packBase?.addEventListener('change', applyPacks);
       packExtra?.addEventListener('change', applyPacks);
+      if (classicCb) { classicCb.checked = includeClassicLocal; classicCb.addEventListener('change', applyPacks); }
       // Try to load models index for the Models panel
       try {
         const res = await fetch('../assets/models/index.json', { cache: 'no-cache' });
@@ -604,10 +754,10 @@
         }
         // Strengths
         visualizer.renderer?.setPostFX?.({
-          bassShake: (fxBassShake?.checked ? Math.max(0, Math.min(1, parseFloat(fxBloomStrength?.value || '0.0'))) : 0),
+          bassShake: (fxBassShake?.checked ? Math.max(0, Math.min(0.6, parseFloat(fxBloomStrength?.value || '0.0'))) : 0),
           bassShakeFreq: Math.max(0.1, parseFloat(fxShakeFreq?.value || '2.0')),
           bassShakeZoom: Math.max(0.0, parseFloat(fxShakeZoom?.value || '0.05')),
-          zoomBounce: (fxZoomBounce?.checked ? 0.5 : 0.0),
+          zoomBounce: (fxZoomBounce?.checked ? 0.35 : 0.0),
           zoomBounceFreq: Math.max(0.1, parseFloat(fxBounceFreq?.value || '1.5')),
         });
         // Quantize & auto vibes
@@ -694,6 +844,8 @@
       const particleCb = document.getElementById('settingParticles');
       const particleNum = document.getElementById('settingParticleCount');
       const monitorCb = document.getElementById('settingMonitor');
+      const audioModeSel = document.getElementById('settingAudioMode');
+      const internalMethodSel = document.getElementById('settingInternalMethod');
       const modelFxCb = document.getElementById('settingModelEffects');
       const modelOnlyCb = document.getElementById('settingModelOnly');
       if (backendSel) {
@@ -738,6 +890,36 @@
             }
           } catch (_) {}
           showToast(`Monitor ${e.target.checked ? 'on' : 'off'}`);
+        });
+      }
+      if (audioModeSel) {
+        const storedMode = localStorage.getItem('audioMode') || 'internal';
+        audioModeSel.value = storedMode;
+        audioModeSel.addEventListener('change', (e) => {
+          const mode = e.target.value;
+          applyAudioMode(mode);
+          // Inform renderer about mic amplification bias
+          if (visualizer?.renderer?.setMicActive) {
+            visualizer.renderer.setMicActive(mode === 'mic' || mode === 'both', mode === 'mic' ? 1.8 : 1.5);
+          }
+        });
+        setTimeout(() => {
+          applyAudioMode(storedMode);
+          if (visualizer?.renderer?.setMicActive) {
+            visualizer.renderer.setMicActive(storedMode === 'mic' || storedMode === 'both', storedMode === 'mic' ? 1.8 : 1.5);
+          }
+        }, 0);
+      }
+      if (internalMethodSel) {
+        const storedIm = localStorage.getItem('internalMethod') || 'auto';
+        internalMethodSel.value = storedIm;
+        internalMethodSel.addEventListener('change', (e) => {
+          internalMethod = e.target.value;
+          localStorage.setItem('internalMethod', internalMethod);
+          showToast(`Internal source: ${internalMethod}`);
+          if (internalMethod === 'tab' && (audioModeSel?.value === 'internal' || audioModeSel?.value === 'both')) {
+            startTabAudioCapture();
+          }
         });
       }
       if (modelFxCb) {
@@ -834,11 +1016,13 @@
       --bar-fg: #e5ecf5;
       --bar-fg-dim: #b7c2d4;
       --accent: #c0ff33; /* cyber green accent */
+      --font-display: "Barrio", system-ui;
+      --font-body: "Inter", -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       --glass-blur: 22px;
-      --glass-bg1: rgba(255,255,255,0.10);
-      --glass-bg2: rgba(255,255,255,0.04);
-      --glass-stroke: rgba(255,255,255,0.16);
-      --glass-glow: rgba(192,255,51,0.20);
+      --glass-bg1: rgba(255,255,255,0.16);
+      --glass-bg2: rgba(255,255,255,0.08);
+      --glass-stroke: rgba(255,255,255,0.22);
+      --glass-glow: rgba(192,255,51,0.28);
       --water-blur: 28px;
       --water-tint1: rgba(180, 220, 255, 0.10);
       --water-tint2: rgba(120, 180, 255, 0.06);
@@ -849,8 +1033,10 @@
       margin: 0;
       background: #0a0b1e;
       color: var(--bar-fg);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-family: var(--font-body);
     }
+
+    .barrio-regular { font-family: "Barrio", system-ui; font-weight: 400; font-style: normal; }
 
     /* Liquid glass bars */
     #topbar, #bottombar {
@@ -899,6 +1085,8 @@
       gap: 10px;
       font-weight: 700;
       font-size: 26px;
+      font-family: var(--font-display);
+      letter-spacing: .3px;
     }
 
     .brand .logo {
@@ -990,6 +1178,7 @@
       font-size: 86px;
       margin: 18px 0 8px;
       font-weight: 800;
+      font-family: var(--font-display);
     }
     .hero-subtitle {
       font-size: 40px;
@@ -1002,10 +1191,10 @@
       position: fixed;
       bottom: 80px;
       right: 16px;
-      background: linear-gradient(135deg, var(--water-tint1), var(--water-tint2));
-      backdrop-filter: blur(var(--water-blur)) saturate(180%);
-      -webkit-backdrop-filter: blur(var(--water-blur)) saturate(180%);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      backdrop-filter: blur(calc(var(--water-blur) * 0.9)) saturate(220%);
+      -webkit-backdrop-filter: blur(calc(var(--water-blur) * 0.9)) saturate(220%);
+      border: 1px solid rgba(255,255,255,0.16);
       border-radius: 12px;
       padding: 16px;
       width: clamp(280px, 38vw, 420px);
@@ -1023,7 +1212,10 @@
     #settingsPanel.open, #playlistPanel.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
     #settingsPanel h4, #playlistPanel h4 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
 
-    .setting-row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; padding: 8px 12px; border-radius: 12px; background: linear-gradient(135deg, var(--glass-bg1), var(--glass-bg2)); border: 1px solid var(--glass-stroke); box-shadow: 0 6px 18px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.15); }
+    .setting-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 12px; margin: 10px 0; padding: 10px 12px; border-radius: 14px; background: linear-gradient(135deg, var(--glass-bg1), var(--glass-bg2)); border: 1px solid var(--glass-stroke); box-shadow: 0 10px 26px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .setting-row .icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); border: 1px solid var(--glass-stroke); color: var(--bar-fg); }
+    .setting-row label { display: block; font-weight: 600; }
+    .setting-row small { display: block; opacity: .75; font-size: 12px; font-weight: 400; }
     .setting-row input[type="number"] { width: 70px; }
     .setting-row:hover { box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.20); }
 
@@ -1061,7 +1253,7 @@
     /* Modal */
     .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(4,6,18,0.55); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 12; }
     .modal.open { opacity: 1; pointer-events: auto; }
-    .modal-card { width: min(92vw, 520px); background: linear-gradient(135deg, rgba(22,26,68,0.52), rgba(14,16,42,0.46)); backdrop-filter: blur(calc(var(--glass-blur) * 0.8)) saturate(150%); -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.8)) saturate(150%); border: 1px solid var(--glass-stroke); border-radius: 14px; padding: 16px; color: var(--bar-fg); box-shadow: 0 16px 42px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .modal-card { width: min(92vw, 520px); background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)); backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.9)) saturate(220%); border: 1px solid rgba(255,255,255,0.16); border-radius: 16px; padding: 16px; color: var(--bar-fg); box-shadow: 0 22px 48px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.2); }
     .modal-card h3 { margin: 6px 0 12px; font-size: 18px; }
     .modal-actions { display:flex; justify-content:flex-end; gap: 8px; margin-top: 14px; }
     .chip { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); margin-right: 8px; font-size: 12px; }
@@ -1096,7 +1288,7 @@
   <div id="topbar">
     <div class="brand">
       <div class="logo"><i class="fa-solid fa-compact-disc"></i></div>
-      <div>Butter Churn&nbsp;<span style="font-weight:400">viz</span></div>
+      <div>Veed Sync</div>
     </div>
     <div class="top-actions">
       <i id="extensionsBtn" class="fa-solid fa-puzzle-piece" title="Preset packs"></i>
@@ -1109,7 +1301,7 @@
   <div id="hero">
     <div class="hero-inner">
       <div class="logo" style="margin: 0 auto; width: 110px; height: 110px; border-width: 6px; font-size: 40px;"><i class="fa-solid fa-compact-disc"></i></div>
-      <div class="hero-title">Butter Churn</div>
+      <div class="hero-title">Veed Sync</div>
       <div class="hero-subtitle">music visualizer</div>
     </div>
   </div>
@@ -1140,68 +1332,42 @@
   <div id="settingsPanel">
     <h4>Settings</h4>
     <h4 style="margin-top:16px">Cinematic FX</h4>
-    <div class="setting-row"><label><i class="fa-solid fa-burst" style="margin-right:6px"></i>Bass Bloom</label><input id="fxBloom" type="checkbox" checked /></div>
-    <div class="setting-row"><label>Bloom strength</label><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
-    <div class="setting-row"><label><i class="fa-solid fa-wave-square" style="margin-right:6px"></i>Bass Shake</label><input id="fxBassShake" type="checkbox" checked /></div>
-    <div class="setting-row"><label>Shake freq (Hz)</label><input id="fxShakeFreq" type="number" min="0.1" max="8" step="0.1" value="2.5" /></div>
-    <div class="setting-row"><label>Shake zoom</label><input id="fxShakeZoom" type="number" min="0" max="0.2" step="0.005" value="0.06" /></div>
-    <div class="setting-row"><label><i class="fa-solid fa-arrows-to-circle" style="margin-right:6px"></i>Downbeat Bounce</label><input id="fxZoomBounce" type="checkbox" checked /></div>
-    <div class="setting-row"><label>Bounce freq (Hz)</label><input id="fxBounceFreq" type="number" min="0.1" max="3" step="0.1" value="1.6" /></div>
-    <div class="setting-row"><label><i class="fa-solid fa-music" style="margin-right:6px"></i>Quantize transitions</label><input id="fxQuantize" type="checkbox" checked /></div>
-    <div class="setting-row"><label>Bars per change</label><input id="fxVibeBars" type="number" min="1" max="8" step="1" value="4" /></div>
-    <div class="setting-row">
-      <label for="settingCycle">Cycle presets</label>
-      <input id="settingCycle" type="checkbox" checked />
-    </div>
-    <div class="setting-row">
-      <label for="settingCycleLen">Cycle length (sec)</label>
-      <input id="settingCycleLen" type="number" min="1" value="15" />
-    </div>
-    <div class="setting-row">
-      <label for="settingRandom">Random order</label>
-      <input id="settingRandom" type="checkbox" checked />
-    </div>
-    <div class="setting-row">
-      <label for="settingBackend">Graphics backend</label>
-      <select id="settingBackend">
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-burst"></i></div><div><label>Bass Bloom</label><small>Glowing amplification on kick transients</small></div><input id="fxBloom" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-sun"></i></div><div><label>Bloom strength</label><small>Intensity of glow</small></div><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-wave-square"></i></div><div><label>Bass Shake</label><small>Subtle camera jiggle on bass</small></div><input id="fxBassShake" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-signal"></i></div><div><label>Shake freq (Hz)</label><small>How often the shake occurs</small></div><input id="fxShakeFreq" type="number" min="0.1" max="8" step="0.1" value="2.5" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-magnifying-glass"></i></div><div><label>Shake zoom</label><small>Zoom amount during shake</small></div><input id="fxShakeZoom" type="number" min="0" max="0.2" step="0.005" value="0.06" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-arrows-to-circle"></i></div><div><label>Downbeat Bounce</label><small>Camera spring on downbeat</small></div><input id="fxZoomBounce" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-chart-line"></i></div><div><label>Bounce freq (Hz)</label><small>Spring oscillation frequency</small></div><input id="fxBounceFreq" type="number" min="0.1" max="3" step="0.1" value="1.6" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-music"></i></div><div><label>Quantize transitions</label><small>Change on bar boundaries</small></div><input id="fxQuantize" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-bars"></i></div><div><label>Bars per change</label><small>Number of bars between changes</small></div><input id="fxVibeBars" type="number" min="1" max="8" step="1" value="4" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-shuffle"></i></div><div><label for="settingCycle">Cycle presets</label><small>Auto-advance through styles</small></div><input id="settingCycle" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-timer"></i></div><div><label for="settingCycleLen">Cycle length (sec)</label><small>Time between changes</small></div><input id="settingCycleLen" type="number" min="1" value="15" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-dice"></i></div><div><label for="settingRandom">Random order</label><small>Shuffle presets instead of linear</small></div><input id="settingRandom" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-desktop"></i></div><div><label for="settingBackend">Graphics backend</label><small>Choose renderer</small></div><select id="settingBackend">
         <option value="auto">Auto</option>
         <option value="webgl2">WebGL2</option>
         <option value="webgpu-exp">WebGPU (experimental)</option>
-      </select>
-    </div>
-    <div class="setting-row">
-      <label for="settingDirect">Direct draw (no copy)</label>
-      <input id="settingDirect" type="checkbox" />
-    </div>
-    <div class="setting-row">
-      <label for="settingParticles">Particles</label>
-      <input id="settingParticles" type="checkbox" />
-    </div>
-    <div class="setting-row">
-      <label for="settingParticleCount">Particle count</label>
-      <input id="settingParticleCount" type="number" min="0" max="5000" step="100" value="600" />
-    </div>
-    <div class="setting-row">
-      <label for="settingModelEffects">Model effects</label>
-      <input id="settingModelEffects" type="checkbox" />
-    </div>
-    <div class="setting-row">
-      <label for="settingModelOnly">Model only</label>
-      <input id="settingModelOnly" type="checkbox" />
-    </div>
-    <div class="setting-row">
-      <label for="settingMonitor">Monitor audio (hear output)</label>
-      <input id="settingMonitor" type="checkbox" checked />
-    </div>
-    <div class="setting-row">
-      <label for="settingOffsetRange">Sync offset (ms)</label>
-      <input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" />
-      <input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" />
-    </div>
-    <div class="setting-row">
-      <label for="settingReduceMotion">Reduce motion</label>
-      <input id="settingReduceMotion" type="checkbox" />
-    </div>
+      </select></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-folder-open"></i></div><div><label>Classic local presets</label><small>Also include bundled classics</small></div><input id="settingClassicLocal" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-bolt"></i></div><div><label for="settingDirect">Direct draw (no copy)</label><small>Reduce GPU copies</small></div><input id="settingDirect" type="checkbox" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-snowflake"></i></div><div><label for="settingParticles">Particles</label><small>Enable background particles</small></div><input id="settingParticles" type="checkbox" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-hashtag"></i></div><div><label for="settingParticleCount">Particle count</label><small>Max background particles</small></div><input id="settingParticleCount" type="number" min="0" max="5000" step="100" value="600" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div><div><label for="settingModelEffects">Model effects</label><small>Post-FX for 3D models</small></div><input id="settingModelEffects" type="checkbox" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-cube"></i></div><div><label for="settingModelOnly">Model only</label><small>Show 3D model without presets</small></div><input id="settingModelOnly" type="checkbox" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-headphones"></i></div><div><label for="settingMonitor">Monitor audio (hear output)</label><small>Route audio to speakers</small></div><input id="settingMonitor" type="checkbox" checked /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-sliders"></i></div><div><label for="settingAudioMode">Audio mode</label><small>Select input routing</small></div><select id="settingAudioMode">
+        <option value="mic">Mic Only</option>
+        <option value="internal">Internal Audio Only</option>
+        <option value="both">Mic + Internal</option>
+      </select></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-waveform-lines"></i></div><div><label for="settingInternalMethod">Internal source</label><small>How to capture internal audio</small></div><select id="settingInternalMethod">
+        <option value="auto">Auto (prefer element)</option>
+        <option value="element">Element Capture (ideal when you load files)</option>
+        <option value="tab">Tab Capture (Share tab audio)</option>
+      </select></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-clock"></i></div><div><label for="settingOffsetRange">Sync offset (ms)</label><small>Fine-tune A/V sync</small></div><input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" /><input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" /></div>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-person-walking"></i></div><div><label for="settingReduceMotion">Reduce motion</label><small>Minimize camera animation</small></div><input id="settingReduceMotion" type="checkbox" /></div>
   </div>
 
   <div id="playlistPanel">
@@ -1235,7 +1401,7 @@
   <!-- About Modal -->
   <div id="aboutModal" class="modal" aria-hidden="true">
     <div class="modal-card">
-      <h3>About Butter Churn</h3>
+      <h3>About Veed Sync</h3>
       <div style="font-size:14px;opacity:.92;line-height:1.5">
         Real‑time WebGL visualizer. Mic and local audio supported. Presets courtesy of the community.
       </div>

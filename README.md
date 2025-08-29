@@ -1,11 +1,11 @@
-# Veed-Sync
+# Veed Sync
 
-Butterchurn is a WebGL implementation of the Milkdrop Visualizer
+Veed Sync is a modern WebGL music visualizer inspired by MilkDrop.
 
 
-## [Try it out](https://butterchurnviz.com)
+## Try it out
 
-[![Butterchurn Screenshot](preview.png)](https://butterchurnviz.com)
+Open `examples/viz.html` locally after building, or host it on a static server.
 
 ## Usage
 
@@ -13,21 +13,21 @@ Butterchurn is a WebGL implementation of the Milkdrop Visualizer
 
 With [pnpm](https://pnpm.io/), [yarn](https://yarnpkg.com/) or [npm](https://npmjs.org/) installed, run
 
-    $ pnpm add butterchurn butterchurn-presets
+    $ pnpm add veed-sync butterchurn-presets
     or
-    $ yarn add butterchurn butterchurn-presets
+    $ yarn add veed-sync butterchurn-presets
     or
-    $ npm install butterchurn butterchurn-presets
+    $ npm install veed-sync butterchurn-presets
 
 ### Create a visualizer
 
 ```JavaScript
-import butterchurn from 'butterchurn';
+import veedSync from 'veed-sync';
 import butterchurnPresets from 'butterchurn-presets';
 
 // initialize audioContext and get canvas
 
-const visualizer = butterchurn.createVisualizer(audioContext, canvas, {
+const visualizer = veedSync.createVisualizer(audioContext, canvas, {
   width: 800,
   height: 600
 });
@@ -54,22 +54,20 @@ visualizer.render();
 
 ### Browser Support
 
-Butterchurn requires the [browser support WebGL 2](https://caniuse.com/#feat=webgl2).
+Veed Sync requires a browser with WebGL 2 or WebGPU and the Web Audio API.
 
 You can test for support using our minimal isSupported script:
 
 ```Javacript
-import isButterchurnSupported from "butterchurn/lib/isSupported.min";
+import isSupported from "veed-sync/dist/isSupported.min.js";
 
-if (isButterchurnSupported()) {
-  // Load and use butterchurn
+if (isSupported()) {
+  // Safe to load Veed Sync
 }
 ```
 
 ## Integrations
 * [Webamp](https://github.com/captbaritone/webamp), the fantastic reimplementation of Winamp 2.9 in HTML5 and Javascript, built by [captbaritone](https://github.com/captbaritone)
-* [Butterchurn Extension](https://chrome.google.com/webstore/detail/butterchurn-music-visuali/jfdmelgfepjcmlljpdeajbiiibkehnih), use Butterchurn to visualize the audio from any page
-* [Rekt Networks](https://nightride.fm/#Mathdrop), Live DJs, Archives & Exclusive Releases, built by [Zei](https://twitter.com/TheRektNetwork)
 * [mStream](http://mstream.io/), your personal music streaming server, built by [IrosTheBeggar](https://github.com/IrosTheBeggar)
 * [pasteur](https://www.pasteur.cc/), trippy videos generated from your music, built by [markneub](https://github.com/markneub)
 * [ChromeAudioVisualizerExtension](https://chrome.google.com/webstore/detail/audiovisualizer/bojhikphaecldnbdekplmadjkflgbkfh), put on some music and turn your browsing session into a party! built by [afreakk](https://github.com/afreakk)
@@ -86,4 +84,4 @@ if (isButterchurnSupported()) {
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. Developed by Chamath Thiwanka.

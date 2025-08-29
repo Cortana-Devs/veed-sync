@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
 import { getBrowser, closeBrowser, createPage } from './utils/puppeteer.js';
-import { renderButterchurn } from './utils/renderButterchurn.js';
+import { renderVeedSync } from './utils/renderVeedSync.js';
 import TestServer from './utils/testServer.js';
 import { imageSnapshotConfig } from './setup.js';
 
@@ -11,7 +11,7 @@ const FRAMES_TO_RENDER = 120;
 const SEED1 = 12345;
 const SEED2 = 54321;
 
-describe('Butterchurn Visual Regression Tests', () => {
+describe('Veed Sync Visual Regression Tests', () => {
   let testServer;
   let serverUrl;
 
@@ -75,14 +75,14 @@ describe('Butterchurn Visual Regression Tests', () => {
         const audioData = testAudioData.slice(0, FRAMES_TO_RENDER);
         const cleanName = name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 
-        const screenshot1 = await renderButterchurn(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED1, 'js');
+        const screenshot1 = await renderVeedSync(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED1, 'js');
 
         expect(screenshot1).toMatchImageSnapshot({
           ...imageSnapshotConfig,
           customSnapshotIdentifier: () => `${cleanName}-${SEED1}`
         });
 
-        const screenshot2 = await renderButterchurn(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED2, 'js');
+        const screenshot2 = await renderVeedSync(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED2, 'js');
 
         expect(screenshot2).toMatchImageSnapshot({
           ...imageSnapshotConfig,
@@ -111,14 +111,14 @@ describe('Butterchurn Visual Regression Tests', () => {
         const audioData = testAudioData.slice(0, FRAMES_TO_RENDER);
         const cleanName = name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 
-        const screenshot1 = await renderButterchurn(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED1, 'wasm');
+        const screenshot1 = await renderVeedSync(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED1, 'wasm');
 
         expect(screenshot1).toMatchImageSnapshot({
           ...imageSnapshotConfig,
           customSnapshotIdentifier: () => `${cleanName}-${SEED1}_wasm`
         });
 
-        const screenshot2 = await renderButterchurn(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED2, 'wasm');
+        const screenshot2 = await renderVeedSync(page, serverUrl, width, height, name, audioData, FRAMES_TO_RENDER, SEED2, 'wasm');
 
         expect(screenshot2).toMatchImageSnapshot({
           ...imageSnapshotConfig,

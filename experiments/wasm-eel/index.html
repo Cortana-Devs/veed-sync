@@ -2,11 +2,11 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Butterchurn Demo</title>
-  <meta name="description" content="Butterchurn Demo Example">
+  <title>Veed Sync Demo</title>
+  <meta name="description" content="Veed Sync Demo Example">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <script type="text/javascript" src="../../dist/butterchurn.js"></script>
+  <script type="text/javascript" src="../../dist/veed-sync.js"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn/lib/butterchurnExtraImages.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/lodash"></script>
   <!-- <script type="text/javascript" src="https://unpkg.com/butterchurn"></script> -->
@@ -707,12 +707,19 @@
 
       function initPlayer() {
         audioContext = new AudioContext();
-        visualizer = butterchurn.default.createVisualizer(audioContext, canvas , {
-          width: 800,
-          height: 600,
-          pixelRatio: window.devicePixelRatio || 1,
-          textureRatio: 1,
-        });
+        visualizer = (window.veedSync && window.veedSync.default && window.veedSync.default.createVisualizer)
+          ? window.veedSync.default.createVisualizer(audioContext, canvas , {
+              width: 800,
+              height: 600,
+              pixelRatio: window.devicePixelRatio || 1,
+              textureRatio: 1,
+            })
+          : window.veedSync.createVisualizer(audioContext, canvas , {
+              width: 800,
+              height: 600,
+              pixelRatio: window.devicePixelRatio || 1,
+              textureRatio: 1,
+            });
 
         visualizer.loadExtraImages(butterchurnExtraImages.default.getImages());
 

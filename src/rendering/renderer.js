@@ -1659,6 +1659,12 @@ export default class Renderer {
     }
   }
 
+  setMicActive(active, micBoost = 1.6) {
+    if (this.audioLevels && this.audioLevels.setResponse) {
+      this.audioLevels.setResponse({ micActive: !!active, micBoost });
+    }
+  }
+
   setInputSensitivity(mult) {
     if (this.audio && this.audio.setSensitivity) {
       this.audio.setSensitivity(mult);
@@ -1675,6 +1681,27 @@ export default class Renderer {
     if (this.audio && this.audio.setTemporalSmoothing) {
       this.audio.setTemporalSmoothing(value);
     }
+  }
+
+  // Apply gentle PostFX styling hints from preset name keywords
+  applyStyleFromName(name) {
+    try {
+      const n = String(name || '').toLowerCase();
+      const fx = Object.assign({}, this.postFX);
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+      const warm = () => { fx.tonemap = clamp((fx.tonemap || 0) + 0.6, 0, 1); fx.exposure = clamp((fx.exposure || 0) + 0.15, -1, 2); fx.tint = [1.06, 0.98, 0.92]; fx.vignette = clamp((fx.vignette || 0) + 0.12, 0, 0.5); fx.grain = clamp((fx.grain || 0) + 0.06, 0, 0.6); };
+      const cool = () => { fx.tonemap = clamp((fx.tonemap || 0) + 0.5, 0, 1); fx.tint = [0.92, 1.05, 1.08]; fx.vignette = clamp((fx.vignette || 0) + 0.14, 0, 0.6); fx.grain = clamp((fx.grain || 0) + 0.1, 0, 0.7); };
+      const storm = () => { fx.contrast = clamp((fx.contrast || 0) + 0.12, -0.5, 0.6); fx.bassShake = clamp((fx.bassShake || 0) + 0.5, 0, 1); fx.bassShakeFreq = 2.6; fx.bassShakeZoom = clamp((fx.bassShakeZoom || 0.05) + 0.02, 0, 0.15); };
+      const fire  = () => { fx.saturation = clamp((fx.saturation || 0) + 0.25, -0.5, 0.6); fx.tint = [1.10, 0.94, 0.90]; };
+
+      if (/(pearl|rose|mother)/.test(n)) warm();
+      if (/(ghost|spirit|night)/.test(n)) cool();
+      if (/(storm|hurricane|thunder|desert)/.test(n)) storm();
+      if (/(fire|red|lava)/.test(n)) fire();
+
+      this.setPostFX(fx);
+    } catch (_) { /* no-op */ }
   }
 
   // Quick vibe controls
