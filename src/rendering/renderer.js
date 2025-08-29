@@ -177,7 +177,7 @@ export default class Renderer {
     this._grainSpark = 0;     // grain spark boost
 
     // FX gates (UI-controlled)
-    this.fxGate = { bloom: true, bassShake: true, zoomBounce: true };
+    this.fxGate = { bloom: true, bassShake: true, zoomBounce: true, cameraShots: true };
 
     // Post FX defaults
     this.postFX = {
@@ -558,7 +558,7 @@ export default class Renderer {
     } else {
       const newTime = performance.now();
       elapsed = (newTime - this.lastTime) / 1000.0;
-      if (elapsed > 1.0 || elapsed < 0.0 || this.frame < 2) {
+      if (elapsed > 1.0 || elapsed < 0.0 || this.frameNum < 2) {
         elapsed = 1.0 / 30.0;
       }
       this.lastTime = newTime;
@@ -586,7 +586,7 @@ export default class Renderer {
     }
 
     const newFPS = this.timeHist.length / (newHistTime - this.timeHist[0]);
-    if (Math.abs(newFPS - this.fps) > 3.0 && this.frame > this.timeHistMax) {
+    if (Math.abs(newFPS - this.fps) > 3.0 && this.frameNum > this.timeHistMax) {
       this.fps = newFPS;
     } else {
       const damping = 0.93;
@@ -953,10 +953,10 @@ export default class Renderer {
       0,
       this.gl.RGBA,
       this.gl.UNSIGNED_BYTE,
-      new Uint8Array(this.texsizeX * this.texsizeY * 4)
+      null
     );
 
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
+    // Skip mipmap generation for offscreen render targets
 
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
@@ -971,7 +971,7 @@ export default class Renderer {
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_MIN_FILTER,
-      this.gl.LINEAR_MIPMAP_LINEAR
+      this.gl.LINEAR
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
@@ -1123,24 +1123,6 @@ export default class Renderer {
     globalVars.on_moment_8 = bs && bs.on_div8 ? 1 : 0;
     globalVars.on_moment_16 = bs && bs.on_div16 ? 1 : 0;
 
-    // Compute low-level features and publish
-    const feats = this.audioFeatures.update();
-    if (feats) {
-      globalVars.rms = feats.rms;
-      globalVars.zcr = feats.zcr;
-      globalVars.centroid_hz = feats.centroidHz;
-      globalVars.rolloff_hz = feats.rolloffHz;
-      globalVars.crest = feats.crest;
-      globalVars.energy = feats.energy;
-    }
-
-    // Clamp energy and band values to avoid clutter spikes
-    globalVars.rms = Math.min(2.0, Math.max(0.0, globalVars.rms || 0));
-    globalVars.crest = Math.min(10.0, Math.max(0.0, globalVars.crest || 0));
-    globalVars.bass = Math.min(3.0, Math.max(0.0, globalVars.bass || 0));
-    globalVars.mid = Math.min(3.0, Math.max(0.0, globalVars.mid || 0));
-    globalVars.treb = Math.min(3.0, Math.max(0.0, globalVars.treb || 0));
-
     const mdVSFrame = this.presetEquationRunner.runFrameEquations(globalVars);
 
     this.runPixelEquations(
@@ -1185,7 +1167,7 @@ export default class Renderer {
     this.prevFrameBuffer = swapFrameBuffer;
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.prevTexture);
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
+    // No mipmap generation needed for post-process pass
 
     this.bindFrambufferAndSetViewport(
       this.targetFrameBuffer,
@@ -1316,7 +1298,7 @@ export default class Renderer {
       const canTrigger = (now - this.lastShotTime) > (this.stab.cameraCooldown || 1.6);
       const conf = (this.beatState?.confidence || 0);
       const beatHit = this.beatState?.onBeat && conf > this.stab.confThreshold;
-      if ((energyDelta > 0.22 || beatHit) && canTrigger) {
+      if (this.fxGate?.cameraShots !== false && (energyDelta > 0.22 || beatHit) && canTrigger) {
         this._startCameraShot(energy);
         this.lastShotTime = now;
       }
@@ -1333,7 +1315,7 @@ export default class Renderer {
       const gateDiv = this.stab.eventGateDivision;
       const onGate = gateDiv === 16 ? (this.momentState?.divisions?.[16]?.on) : (gateDiv === 4 ? (this.momentState?.divisions?.[4]?.on) : (this.momentState?.divisions?.[8]?.on));
       if (onGate && conf2 > this.stab.confThreshold) {
-        if (this.beatState?.onBass) { this._camNudgeZ += 0.7 * conf2; this._fovNarrow += 0.45 * conf2; this._camNudgeSide += 0.18 * conf2; }
+        if (this.fxGate?.bassShake !== false && this.beatState?.onBass) { this._camNudgeZ += 0.7 * conf2; this._fovNarrow += 0.45 * conf2; this._camNudgeSide += 0.18 * conf2; }
         if (this.beatState?.onMid) { this._particlesBurst += 0.7 * conf2; }
         if (this.beatState?.onTreb) { this._grainSpark += 0.55 * conf2; }
       }
@@ -1364,7 +1346,8 @@ export default class Renderer {
 
       // Slight side dolly for shot variety
       const beatWobble = this.beatState ? (0.05 * Math.sin(this.beatState.phase * Math.PI * 2)) : 0.0;
-      const side = this.stab.sideWobble * Math.sin(this.time * 0.35) + beatWobble + 0.05 * this._camNudgeSide;
+      const baseWobble = (this.fxGate?.bassShake === false) ? 0.0 : this.stab.sideWobble;
+      const side = baseWobble * Math.sin(this.time * 0.35) + beatWobble + 0.05 * this._camNudgeSide;
       this.particleModel.setCamera({ eye: [side, eye[1], eye[2]], target: [0, faceY, 0], fov, aspect });
       this.particles.configure({ pointSize: Math.max(2.0, 5.0 * (energy + 0.25 * this._particlesBurst)), speed: 1.0 + energy + 0.6 * this._particlesBurst });
 
@@ -1397,19 +1380,21 @@ export default class Renderer {
     if (this.beatState) {
       const conf = Math.max(0, Math.min(1, this.beatState.confidence || 0));
       const onset = Math.max(0, Math.min(1, this.beatState.onsetStrength || 0));
+      const bandS = this.beatState.bandStrengths || [0,0,0];
       const scale = this.stab.postFXImpactScale || 0.7;
-      const onBeatPulse = ((this.beatState.onBeat ? 0.10 : 0.0) * conf + 0.05 * onset) * scale;
-      const beatSwell = (0.04 * Math.sin(this.beatState.phase * Math.PI * 2)) * scale;
-      const bassPunch = (((this.beatState.onBass ? 0.04 : 0.0) + 0.03 * onset) * conf) * scale;
-      const trebCrackle = ((this.beatState.onTreb ? 0.018 : 0.0) * conf) * scale;
-      const downbeatBounce = ((this.beatState.onDownbeat ? 0.32 : 0.0) * conf) * scale;
+      // Pulses: make visuals feel like dancing to music
+      const onBeatPulse = ((this.beatState.onBeat ? 0.10 : 0.0) * conf + 0.06 * onset) * scale;
+      const beatSwell = (0.045 * Math.sin(this.beatState.phase * Math.PI * 2)) * scale;
+      const bassPunch = ((0.03 + 0.05 * bandS[0]) * conf) * scale;
+      const trebCrackle = ((0.012 + 0.02 * bandS[2]) * conf) * scale;
+      const downbeatBounce = ((this.beatState.onDownbeat ? (0.18 + 0.22 * conf) : 0.0)) * scale;
 
       const targetFX = {
         exposure: this.postFX.exposure + onBeatPulse + beatSwell,
         contrast: this.postFX.contrast + bassPunch,
         grain: Math.max(0, this.postFX.grain + trebCrackle),
-        bassShake: Math.min(1.0, Math.max(0.0, (this.beatState.onBass ? 0.65 : 0.0) * conf)),
-        zoomBounce: Math.min(1.0, Math.max(0.0, downbeatBounce)),
+        bassShake: (this.fxGate?.bassShake === false) ? 0 : Math.min(1.0, Math.max(0.0, (this.beatState.onBass ? 0.65 : 0.0) * conf)),
+        zoomBounce: (this.fxGate?.zoomBounce === false) ? 0 : Math.min(1.0, Math.max(0.0, downbeatBounce)),
       };
       // smooth towards target to avoid stepping
       const lerp = (a, b, t) => a * (1 - t) + b * t;
@@ -1829,18 +1814,19 @@ export default class Renderer {
     const n = String(name || '').toLowerCase();
     if (n === 'cinematic') {
       this.enableCinematicMoments({ barsPerTransition: 2, phraseBars: 8, swing: 0.12 });
+      this.setMomentConfig({ groove: 'light_swing' });
       this.setStabilityConfig({ confThreshold: 0.6, eventGateDivision: 8, postFXImpactScale: 0.65, postFXLerp: 0.08, cameraCooldown: 1.8 });
       if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.6, gateDivision: 8 });
     } else if (n === 'responsive') {
       // quicker, punchier
       this.setQuantizedTransitions(true, 1);
-      this.setMomentConfig({ swing: 0.08, phraseBars: 4, latencySeconds: -0.02, cinematicSmoothingPerSecond: 0.35 });
+      this.setMomentConfig({ swing: 0.1, groove: 'heavy_swing', phraseBars: 4, latencySeconds: -0.02, cinematicSmoothingPerSecond: 0.35 });
       this.setStabilityConfig({ confThreshold: 0.5, eventGateDivision: 4, postFXImpactScale: 0.85, postFXLerp: 0.12, cameraCooldown: 1.2 });
       if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.5, gateDivision: 4 });
     } else if (n === 'chill') {
       // very smooth, minimal movement
       this.setQuantizedTransitions(true, 4);
-      this.setMomentConfig({ swing: 0.0, phraseBars: 16, latencySeconds: -0.03, cinematicSmoothingPerSecond: 0.18 });
+      this.setMomentConfig({ swing: 0.0, groove: 'straight', phraseBars: 16, latencySeconds: -0.03, cinematicSmoothingPerSecond: 0.18 });
       this.setStabilityConfig({ confThreshold: 0.7, eventGateDivision: 4, postFXImpactScale: 0.45, postFXLerp: 0.06, cameraCooldown: 2.2, sideWobble: 0.035 });
       if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.7, gateDivision: 4 });
     }

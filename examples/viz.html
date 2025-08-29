@@ -917,6 +917,18 @@
         settingsPanel.classList.toggle('open');
         announce(settingsPanel.classList.contains('open') ? 'Opened settings' : 'Closed settings');
       });
+      // Progressive disclosure toggle
+      const advBtn = document.getElementById('toggleAdvanced');
+      if (advBtn) {
+        const applyAdv = (on) => {
+          if (on) { settingsPanel.classList.add('show-advanced'); advBtn.textContent = 'Hide advanced'; }
+          else { settingsPanel.classList.remove('show-advanced'); advBtn.textContent = 'Show advanced'; }
+          try { localStorage.setItem('showAdvanced', on ? '1' : '0'); } catch(_) {}
+        };
+        const storedAdv = (localStorage.getItem('showAdvanced') || '0') === '1';
+        applyAdv(storedAdv);
+        advBtn.addEventListener('click', () => { applyAdv(!settingsPanel.classList.contains('show-advanced')); });
+      }
       // Scene shortcuts
       const bindScene = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
       bindScene('sceneAnimals', async () => {
@@ -959,6 +971,7 @@
       const fxBloom = document.getElementById('fxBloom');
       const fxBassShake = document.getElementById('fxBassShake');
       const fxZoomBounce = document.getElementById('fxZoomBounce');
+      const fxCameraShots = document.getElementById('fxCameraShots');
       const fxQuant = document.getElementById('fxQuantize');
       const fxAutoVibe = document.getElementById('fxAutoVibe');
       const fxVibeBars = document.getElementById('fxVibeBars');
@@ -972,10 +985,11 @@
         if (!visualizer) return;
         // Gates
         if (visualizer.renderer) {
-          visualizer.renderer.fxGate = visualizer.renderer.fxGate || { bloom: true, bassShake: true, zoomBounce: true };
+          visualizer.renderer.fxGate = visualizer.renderer.fxGate || { bloom: true, bassShake: true, zoomBounce: true, cameraShots: true };
           if (fxBloom) visualizer.renderer.fxGate.bloom = !!fxBloom.checked;
           if (fxBassShake) visualizer.renderer.fxGate.bassShake = !!fxBassShake.checked;
           if (fxZoomBounce) visualizer.renderer.fxGate.zoomBounce = !!fxZoomBounce.checked;
+          if (fxCameraShots) visualizer.renderer.fxGate.cameraShots = !!fxCameraShots.checked;
         }
         // Strengths
         visualizer.renderer?.setPostFX?.({
@@ -998,6 +1012,7 @@
           localStorage.setItem('fxShakeFreq', String(fxShakeFreq?.value || '2.5'));
           localStorage.setItem('fxShakeZoom', String(fxShakeZoom?.value || '0.06'));
           localStorage.setItem('fxZoomBounce', fxZoomBounce?.checked ? '1' : '0');
+          localStorage.setItem('fxCameraShots', fxCameraShots?.checked ? '1' : '0');
           localStorage.setItem('fxBounceFreq', String(fxBounceFreq?.value || '1.6'));
           localStorage.setItem('fxQuantize', fxQuant?.checked ? '1' : '0');
           localStorage.setItem('fxAutoVibe', fxAutoVibe?.checked ? '1' : '0');
@@ -1005,7 +1020,7 @@
         } catch(_) {}
       }, 100);
 
-      [fxBloom, fxBassShake, fxZoomBounce, fxQuant, fxAutoVibe, fxVibeBars, fxBloomStrength, fxShakeFreq, fxShakeZoom, fxBounceFreq]
+      [fxBloom, fxBassShake, fxZoomBounce, fxCameraShots, fxQuant, fxAutoVibe, fxVibeBars, fxBloomStrength, fxShakeFreq, fxShakeZoom, fxBounceFreq]
         .forEach((el) => el && el.addEventListener('change', applyFx));
 
       // Restore persisted FX values
@@ -1016,6 +1031,7 @@
         if (fxShakeFreq) fxShakeFreq.value = String(localStorage.getItem('fxShakeFreq') || '2.5');
         if (fxShakeZoom) fxShakeZoom.value = String(localStorage.getItem('fxShakeZoom') || '0.06');
         if (fxZoomBounce) fxZoomBounce.checked = (localStorage.getItem('fxZoomBounce') || '1') === '1';
+        if (fxCameraShots) fxCameraShots.checked = (localStorage.getItem('fxCameraShots') || '1') === '1';
         if (fxBounceFreq) fxBounceFreq.value = String(localStorage.getItem('fxBounceFreq') || '1.6');
         if (fxQuant) fxQuant.checked = (localStorage.getItem('fxQuantize') || '1') === '1';
         if (fxAutoVibe) fxAutoVibe.checked = (localStorage.getItem('fxAutoVibe') || '1') === '1';
@@ -1071,6 +1087,7 @@
       const monitorCb = document.getElementById('settingMonitor');
       const audioModeSel = document.getElementById('settingAudioMode');
       const internalMethodSel = document.getElementById('settingInternalMethod');
+      const grooveSel = document.getElementById('settingGroove');
       const modelFxCb = document.getElementById('settingModelEffects');
       const modelOnlyCb = document.getElementById('settingModelOnly');
       if (backendSel) {
@@ -1166,6 +1183,23 @@
           if (visualizer?.setModelOnlyMode) visualizer.setModelOnlyMode(e.target.checked);
           showToast(`Mode: ${e.target.checked ? 'Model-only' : 'Mixed'}`);
         });
+      }
+      if (grooveSel) {
+        const storedG = localStorage.getItem('groove') || 'light_swing';
+        grooveSel.value = storedG;
+        const applyGroove = (g) => {
+          try {
+            visualizer?.renderer?.setMomentConfig?.({ groove: g });
+            showToast(`Groove: ${g.replace('_', ' ')}`);
+          } catch(_) {}
+        };
+        grooveSel.addEventListener('change', (e) => {
+          const g = e.target.value;
+          localStorage.setItem('groove', g);
+          applyGroove(g);
+        });
+        // apply at init
+        setTimeout(() => applyGroove(storedG), 0);
       }
 
       // Sync offset controls
@@ -1556,7 +1590,7 @@
     #settingsPanel input[type="text"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
     #settingsPanel input[type="number"]::-webkit-outer-spin-button,
     #settingsPanel input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    #settingsPanel input[type="number"] { -moz-appearance: textfield; width: 90px; }
+    #settingsPanel input[type="number"] { appearance: textfield; -moz-appearance: textfield; width: 90px; }
 
     /* Range slider */
     #settingsPanel input[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; height: 6px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
@@ -1654,6 +1688,12 @@
   <style>
     /* Sidebar removed */
   </style>
+  <style>
+    /* Progressive disclosure for advanced rows */
+    #settingsPanel .advanced { display: none; }
+    #settingsPanel.show-advanced .advanced { display: flex; }
+    .advanced-toggle { margin: 8px 0 12px; display: inline-block; font-size: 12px; opacity: .8; cursor: pointer; }
+  </style>
 </head>
 <body>
   <div id="topbar">
@@ -1704,6 +1744,8 @@
 
   <div id="settingsPanel">
     <h4>Settings</h4>
+    <div><button id="toggleAdvanced" class="btn small secondary advanced-toggle">Show advanced</button></div>
+
     <h4 style="margin-top:10px">Scenes</h4>
     <div class="scene-grid">
       <button class="scene-btn" id="sceneAnimals" title="Animals"><i class="fa-solid fa-paw"></i><span>Animals</span></button>
@@ -1711,45 +1753,67 @@
       <button class="scene-btn" id="sceneBeach" title="Beach"><i class="fa-solid fa-umbrella-beach"></i><span>Beach</span></button>
       <button class="scene-btn" id="sceneParty" title="Party"><i class="fa-solid fa-champagne-glasses"></i><span>Party</span></button>
     </div>
-    <h4 style="margin-top:16px">Cinematic FX</h4>
+
+    <h4 style="margin-top:16px">Visuals</h4>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-burst"></i></div><div><label>Bass Bloom</label><small>Glowing amplification on kick transients</small></div><input id="fxBloom" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-sun"></i></div><div><label>Bloom strength</label><small>Intensity of glow</small></div><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
+    <div class="setting-row advanced"><div class="icon"><i class="fa-solid fa-sun"></i></div><div><label>Bloom strength</label><small>Intensity of glow</small></div><input id="fxBloomStrength" type="number" min="0" max="1" step="0.05" value="0.4" /></div>
+
+    <h4 style="margin-top:16px">Motion</h4>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-video"></i></div><div><label>Cinematic shots</label><small>Occasional auto camera moves</small></div><input id="fxCameraShots" type="checkbox" checked /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-wave-square"></i></div><div><label>Bass Shake</label><small>Subtle camera jiggle on bass</small></div><input id="fxBassShake" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-signal"></i></div><div><label>Shake freq (Hz)</label><small>How often the shake occurs</small></div><input id="fxShakeFreq" type="number" min="0.1" max="8" step="0.1" value="2.5" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-magnifying-glass"></i></div><div><label>Shake zoom</label><small>Zoom amount during shake</small></div><input id="fxShakeZoom" type="number" min="0" max="0.2" step="0.005" value="0.06" /></div>
+    <div class="setting-row advanced"><div class="icon"><i class="fa-solid fa-signal"></i></div><div><label>Shake freq (Hz)</label><small>How often the shake occurs</small></div><input id="fxShakeFreq" type="number" min="0.1" max="8" step="0.1" value="2.5" /></div>
+    <div class="setting-row advanced"><div class="icon"><i class="fa-solid fa-magnifying-glass"></i></div><div><label>Shake zoom</label><small>Zoom amount during shake</small></div><input id="fxShakeZoom" type="number" min="0" max="0.2" step="0.005" value="0.06" /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-arrows-to-circle"></i></div><div><label>Downbeat Bounce</label><small>Camera spring on downbeat</small></div><input id="fxZoomBounce" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-chart-line"></i></div><div><label>Bounce freq (Hz)</label><small>Spring oscillation frequency</small></div><input id="fxBounceFreq" type="number" min="0.1" max="3" step="0.1" value="1.6" /></div>
+    <div class="setting-row advanced"><div class="icon"><i class="fa-solid fa-chart-line"></i></div><div><label>Bounce freq (Hz)</label><small>Spring oscillation frequency</small></div><input id="fxBounceFreq" type="number" min="0.1" max="3" step="0.1" value="1.6" /></div>
+
+    <h4 style="margin-top:16px">Playback</h4>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-music"></i></div><div><label>Quantize transitions</label><small>Change on bar boundaries</small></div><input id="fxQuantize" type="checkbox" checked /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-bars"></i></div><div><label>Bars per change</label><small>Number of bars between changes</small></div><input id="fxVibeBars" type="number" min="1" max="8" step="1" value="4" /></div>
+    <div class="row"><label for="settingGroove">Groove</label>
+      <select id="settingGroove">
+        <option value="straight">Straight</option>
+        <option value="light_swing" selected>Light Swing</option>
+        <option value="heavy_swing">Heavy Swing</option>
+      </select>
+    </div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-shuffle"></i></div><div><label for="settingCycle">Cycle presets</label><small>Auto-advance through styles</small></div><input id="settingCycle" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-timer"></i></div><div><label for="settingCycleLen">Cycle length (sec)</label><small>Time between changes</small></div><input id="settingCycleLen" type="number" min="1" value="15" /></div>
+    <div class="setting-row advanced"><div class="icon"><i class="fa-solid fa-timer"></i></div><div><label for="settingCycleLen">Cycle length (sec)</label><small>Time between changes</small></div><input id="settingCycleLen" type="number" min="1" value="15" /></div>
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-dice"></i></div><div><label for="settingRandom">Random order</label><small>Shuffle presets instead of linear</small></div><input id="settingRandom" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-desktop"></i></div><div><label for="settingBackend">Graphics backend</label><small>Choose renderer</small></div><select id="settingBackend">
+
+    <div class="divider"></div>
+    <div class="row">
+      <label for="settingBackend">Backend</label>
+      <select id="settingBackend">
         <option value="auto">Auto</option>
         <option value="webgl2">WebGL2</option>
-        <option value="webgpu-exp">WebGPU (experimental)</option>
-      </select></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-folder-open"></i></div><div><label>Classic local presets</label><small>Also include bundled classics</small></div><input id="settingClassicLocal" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-bolt"></i></div><div><label for="settingDirect">Direct draw (no copy)</label><small>Reduce GPU copies</small></div><input id="settingDirect" type="checkbox" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-snowflake"></i></div><div><label for="settingParticles">Particles</label><small>Enable background particles</small></div><input id="settingParticles" type="checkbox" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-hashtag"></i></div><div><label for="settingParticleCount">Particle count</label><small>Max background particles</small></div><input id="settingParticleCount" type="number" min="0" max="5000" step="100" value="600" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div><div><label for="settingModelEffects">Model effects</label><small>Post-FX for 3D models</small></div><input id="settingModelEffects" type="checkbox" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-cube"></i></div><div><label for="settingModelOnly">Model only</label><small>Show 3D model without presets</small></div><input id="settingModelOnly" type="checkbox" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-headphones"></i></div><div><label for="settingMonitor">Monitor audio (hear output)</label><small>Route audio to speakers</small></div><input id="settingMonitor" type="checkbox" checked /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-sliders"></i></div><div><label for="settingAudioMode">Audio mode</label><small>Select input routing</small></div><select id="settingAudioMode">
-        <option value="mic">Mic Only</option>
-        <option value="internal">Internal Audio Only</option>
-        <option value="both">Mic + Internal</option>
-      </select></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-microphone"></i></div><div><label for="settingRNNoise">Mic noise suppression (RNNoise)</label><small>Reduce background noise</small></div><input id="settingRNNoise" type="checkbox" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-signal"></i></div><div><label for="settingMicSensitivity">Mic sensitivity</label><small>Pre-analysis gain</small></div><input id="settingMicSensitivity" type="number" min="0" max="4" step="0.05" value="1.4" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-waveform-lines"></i></div><div><label for="settingInternalMethod">Internal source</label><small>How to capture internal audio</small></div><select id="settingInternalMethod">
-        <option value="auto">Auto (prefer element)</option>
-        <option value="element">Element Capture (ideal when you load files)</option>
-        <option value="tab">Tab Capture (Share tab audio)</option>
-      </select></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-clock"></i></div><div><label for="settingOffsetRange">Sync offset (ms)</label><small>Fine-tune A/V sync</small></div><input id="settingOffsetRange" type="range" min="-200" max="200" step="1" value="0" style="flex:1;margin:0 8px;" /><input id="settingOffsetNum" type="number" min="-200" max="200" step="1" value="0" style="width:80px;" /></div>
-    <div class="setting-row"><div class="icon"><i class="fa-solid fa-person-walking"></i></div><div><label for="settingReduceMotion">Reduce motion</label><small>Minimize camera animation</small></div><input id="settingReduceMotion" type="checkbox" /></div>
+        <option value="webgpu">WebGPU (experimental)</option>
+      </select>
+    </div>
+    <div class="row"><label for="settingDirect">Direct draw</label><input id="settingDirect" type="checkbox" /></div>
+    <div class="row"><label for="settingAudioMode">Audio mode</label>
+      <select id="settingAudioMode">
+        <option value="internal">Internal</option>
+        <option value="mic">Mic</option>
+        <option value="both">Both</option>
+      </select>
+    </div>
+    <div class="row"><label for="settingInternalMethod">Internal source</label>
+      <select id="settingInternalMethod">
+        <option value="auto">Auto</option>
+        <option value="element">HTMLAudio</option>
+        <option value="file">Local File</option>
+        <option value="tab">Tab Capture</option>
+      </select>
+    </div>
+    <div class="row"><label>Monitor audio</label><input id="settingMonitor" type="checkbox" checked /></div>
+
+    <div class="row"><label>Particles</label><input id="settingParticles" type="checkbox" /></div>
+    <div class="row advanced"><label>Count</label><input id="settingParticleCount" type="number" min="0" max="5000" step="50" value="600" /></div>
+
+    <div class="row"><label>Model Effects</label><input id="settingModelEffects" type="checkbox" /></div>
+    <div class="row"><label>Model Only</label><input id="settingModelOnly" type="checkbox" /></div>
+
+    <div class="row"><label>Reduce motion</label><input id="settingReduceMotion" type="checkbox" /></div>
   </div>
 
   <div id="playlistPanel">

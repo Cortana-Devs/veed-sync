@@ -22,6 +22,10 @@ export default class MomentSync {
     this._phraseBaseBar = 0;
     this._cinPhase = 0;
     this._lastBarCount = 0;
+
+    // Groove profile: adjusts intra-bar timing feel (0=straight, 1=heavy swing)
+    // Provide simple presets: straight, light_swing, heavy_swing
+    this.groove = (opts.groove || 'light_swing');
   }
 
   setConfig(opts = {}) {
@@ -34,11 +38,16 @@ export default class MomentSync {
     if (Number.isFinite(opts.cinematicSmoothingPerSecond)) {
       this.cinematicSmoothingPerSecond = Math.max(0, Math.min(1, opts.cinematicSmoothingPerSecond));
     }
+    if (opts.groove) this.groove = opts.groove;
   }
 
   // Warp phase inside a single beat for swing. Input and output in [0,1)
   _swingWarp(phase) {
-    const s = this.swing;
+    let s = this.swing;
+    // Groove scaling
+    if (this.groove === 'heavy_swing') s = Math.max(s, 0.2);
+    else if (this.groove === 'light_swing') s = Math.max(s, 0.08);
+    else if (this.groove === 'straight') s = 0;
     if (s <= 1e-6) return phase;
     // First half shortened by (1 - s), second half lengthened by (1 + s)
     const t1 = 0.5 * (1 - s);

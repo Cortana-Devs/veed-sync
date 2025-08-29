@@ -7,6 +7,9 @@ export default class WebGPUCompositor {
     this.device = null;
     this.ctx = null;
     this.format = 'bgra8unorm';
+    this.pipeline = null;
+    this.sampler = null;
+    this.bindGroupLayout = null;
   }
 
   async init() {
@@ -20,29 +23,95 @@ export default class WebGPUCompositor {
       format: this.format,
       alphaMode: 'opaque'
     });
+
+    const shaderModule = this.device.createShaderModule({
+      code: `
+        @vertex fn vs_main(@builtin(vertex_index) VertexIndex : u32) -> @builtin(position) vec4f {
+          var pos = array<vec2f, 6>(
+            vec2f(-1.0, -1.0), vec2f( 1.0, -1.0), vec2f(-1.0,  1.0),
+            vec2f(-1.0,  1.0), vec2f( 1.0, -1.0), vec2f( 1.0,  1.0)
+          );
+          return vec4f(pos[VertexIndex], 0.0, 1.0);
+        }
+
+        @group(0) @binding(0) var samp : sampler;
+        @group(0) @binding(1) var tex  : texture_2d<f32>;
+
+        @fragment fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          let uv = pos.xy / vec2f(f32(textureDimensions(tex).x), f32(textureDimensions(tex).y));
+          // Convert screen coords to 0..1 uv
+          let uv01 = vec2f(uv.x, 1.0 - uv.y);
+          let color = textureSampleLevel(tex, samp, uv01, 0.0);
+          return vec4f(color.rgb, 1.0);
+        }
+      `
+    });
+
+    this.bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ]
+    });
+
+    const pipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
+
+    this.pipeline = this.device.createRenderPipeline({
+      layout: pipelineLayout,
+      vertex: { module: shaderModule, entryPoint: 'vs_main' },
+      fragment: { module: shaderModule, entryPoint: 'fs_main', targets: [{ format: this.format }] },
+      primitive: { topology: 'triangle-list' }
+    });
+
+    this.sampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   }
 
   // Present an ImageBitmap onto the WebGPU canvas
   async presentFromBitmap(bitmap) {
     if (!this.device || !this.ctx) return;
-    const texture = this.device.createTexture({
+
+    const srcTexture = this.device.createTexture({
       size: [bitmap.width, bitmap.height, 1],
-      format: this.format,
-      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
     });
+
     // Copy bitmap into GPU texture
     await this.device.queue.copyExternalImageToTexture(
       { source: bitmap },
-      { texture },
+      { texture: srcTexture },
       [bitmap.width, bitmap.height]
     );
 
-    // Simple render pass that draws the texture to the canvas would go here.
-    // For brevity, we rely on canvas compositing outside for now.
-    // In real use, we'd have a pipeline and bind groups to sample the texture.
+    const view = this.ctx.getCurrentTexture().createView();
+    const encoder = this.device.createCommandEncoder();
 
-    // Cleanup
-    texture.destroy();
+    const bindGroup = this.device.createBindGroup({
+      layout: this.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: srcTexture.createView() },
+      ]
+    });
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view,
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }
+      ]
+    });
+
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6, 1, 0, 0);
+    pass.end();
+
+    this.device.queue.submit([encoder.finish()]);
+    srcTexture.destroy();
   }
 }
 

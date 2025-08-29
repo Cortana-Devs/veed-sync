@@ -47,6 +47,35 @@ const Scenes = [
     modelParams: { pointSize: 2.3, scale: 0.62, spinSpeed: 0.20 },
     particles: { enabled: false },
   },
+  // New particle-based scenes (blend between dance moments)
+  {
+    key: "nebula_swarm",
+    label: "Nebula Swarm",
+    modelPath: "assets/models/fantasy/armadillo.obj",
+    vibeKey: "neon_city",
+    postFX: { exposure: 0.02, tonemap: 0.9, saturation: 0.16, contrast: 0.12, vignette: 0.28, tint: [0.92, 1.04, 1.10] },
+    modelParams: { pointSize: 2.0, scale: 0.56, spinSpeed: 0.34 },
+    particles: { enabled: true, maxCount: 1400 },
+  },
+  {
+    key: "ghost_trails",
+    label: "Ghost Trails",
+    modelPath: "assets/models/supernatural/ghost.obj",
+    vibeKey: "nature_doc",
+    postFX: { exposure: -0.06, tonemap: 0.92, saturation: -0.02, contrast: 0.04, vignette: 0.30, grain: 0.18, tint: [0.95, 1.02, 1.08] },
+    modelParams: { pointSize: 2.6, scale: 0.64, spinSpeed: 0.22 },
+    particles: { enabled: true, maxCount: 1000 },
+  },
+  // WebGPU-friendly character (denser particle draw looks better on WebGPU)
+  {
+    key: "alpha_predator",
+    label: "Alpha Predator",
+    modelPath: "assets/models/alpha_predators/",
+    vibeKey: "neon_city",
+    postFX: { exposure: 0.04, tonemap: 0.88, saturation: 0.18, contrast: 0.18, vignette: 0.32, tint: [0.90, 1.03, 1.12] },
+    modelParams: { pointSize: 2.1, scale: 0.66, spinSpeed: 0.32 },
+    particles: { enabled: true, maxCount: 1600 },
+  },
 ];
 
 export function listScenes() {

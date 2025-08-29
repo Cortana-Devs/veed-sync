@@ -10,6 +10,11 @@ export default class FFT {
     }
     this.initBitRevTable();
     this.initCosSinTable();
+
+    // Reusable buffers to avoid per-call allocations
+    this._real = new Float32Array(this.NFREQ);
+    this._imag = new Float32Array(this.NFREQ);
+    this._spectral = new Float32Array(this.samplesOut);
   }
 
   initEqualizeTable() {
@@ -70,8 +75,8 @@ export default class FFT {
   }
 
   timeToFrequencyDomain(waveDataIn) {
-    const real = new Float32Array(this.NFREQ);
-    const imag = new Float32Array(this.NFREQ);
+    const real = this._real;
+    const imag = this._imag;
 
     for (let i = 0; i < this.NFREQ; i++) {
       const idx = this.bitrevtable[i];
@@ -112,7 +117,7 @@ export default class FFT {
       t += 1;
     }
 
-    const spectralDataOut = new Float32Array(this.samplesOut);
+    const spectralDataOut = this._spectral;
     if (this.equalize) {
       for (let i = 0; i < this.samplesOut; i++) {
         spectralDataOut[i] =

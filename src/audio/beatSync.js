@@ -57,7 +57,12 @@ export default class BeatSync {
     // Spectral flux (positive changes only)
     let flux = 0;
     const bandFlux = [0, 0, 0];
-    if (this.prevSpec && spectrum && spectrum.length === this.prevSpec.length) {
+    if (spectrum) {
+      // Initialize reusable prevSpec buffer once per size
+      if (!this.prevSpec || this.prevSpec.length !== spectrum.length) {
+        this.prevSpec = new Float32Array(spectrum.length);
+      }
+
       for (let i = 0; i < spectrum.length; i++) {
         const diff = spectrum[i] - this.prevSpec[i];
         if (diff > 0) flux += diff;
@@ -68,8 +73,10 @@ export default class BeatSync {
           }
         }
       }
+
+      // Copy current spectrum into prevSpec for next frame
+      this.prevSpec.set(spectrum);
     }
-    this.prevSpec = spectrum ? spectrum.slice(0) : this.prevSpec;
 
     // Rolling stats for adaptive threshold
     const m = this.thresholdState;
@@ -84,6 +91,7 @@ export default class BeatSync {
     const onsetStrength = Math.max(0, (flux - thresh) / (thresh + 1e-6));
     let isOnset = flux > (thresh * this.hysteresis);
     let bandOnsets = [false, false, false];
+    let bandStrengths = [0, 0, 0];
     if (this.bandRanges) {
       for (let b = 0; b < 3; b++) {
         const st = this.bandThresh[b];
@@ -93,7 +101,9 @@ export default class BeatSync {
         st.var = (1 - a) * (st.var + a * d * d);
         const s = Math.sqrt(Math.max(1e-6, st.var));
         const th = st.mean + this.sensitivity * this.threshold * s;
-        bandOnsets[b] = bandFlux[b] > th;
+        const strength = Math.max(0, (bandFlux[b] - th) / (th + 1e-6));
+        bandOnsets[b] = strength > 0;
+        bandStrengths[b] = Math.max(0, Math.min(1, strength));
       }
     }
 
@@ -145,10 +155,10 @@ export default class BeatSync {
       if (this.beatCount % this.meter === 0) this.barCount += 1;
     }
 
-    return this.getState(bandOnsets, flux, onDownbeat, onsetStrength);
+    return this.getState(bandOnsets, flux, onDownbeat, onsetStrength, bandStrengths);
   }
 
-  getState(bandOnsets = [false, false, false], flux = 0, onDownbeat = false, onsetStrength = 0) {
+  getState(bandOnsets = [false, false, false], flux = 0, onDownbeat = false, onsetStrength = 0, bandStrengths = [0,0,0]) {
     return {
       time: this.time,
       bpm: this.bpm,
@@ -165,6 +175,7 @@ export default class BeatSync {
       onBass: !!bandOnsets[0],
       onMid: !!bandOnsets[1],
       onTreb: !!bandOnsets[2],
+      bandStrengths,
     };
   }
 }
