@@ -3,6 +3,9 @@ export default class BeatSync {
     this.expectedBpm = opts.expectedBpm || 120;
     this.meter = opts.meter || 4; // beats per bar
     this.maxHistory = 64;
+    // Onset hysteresis reduces false triggers; min interval prevents doubles
+    this.hysteresis = Math.max(1.0, opts.hysteresis || 1.04);
+    this.minBeatInterval = Math.max(0.12, Math.min(0.5, opts.minBeatInterval || 0.18));
     this.reset();
     this.setConfig(opts);
     this.bandRanges = null; // [{start, stop}, ...]
@@ -78,7 +81,8 @@ export default class BeatSync {
     const std = Math.sqrt(Math.max(1e-6, m.var));
 
     const thresh = m.mean + this.sensitivity * this.threshold * (std + 0.002);
-    const isOnset = flux > thresh;
+    const onsetStrength = Math.max(0, (flux - thresh) / (thresh + 1e-6));
+    let isOnset = flux > (thresh * this.hysteresis);
     let bandOnsets = [false, false, false];
     if (this.bandRanges) {
       for (let b = 0; b < 3; b++) {
@@ -103,6 +107,13 @@ export default class BeatSync {
 
     // Onset handling and tempo tracking
     let onDownbeat = false;
+    if (isOnset) {
+      // Guard against double-triggering
+      const sinceLast = this.lastBeatTime >= 0 ? (this.time - this.lastBeatTime) : Infinity;
+      if (sinceLast < this.minBeatInterval) {
+        isOnset = false;
+      }
+    }
     if (isOnset) {
       if (this.lastBeatTime >= 0) {
         const ioi = this.time - this.lastBeatTime;
@@ -134,10 +145,10 @@ export default class BeatSync {
       if (this.beatCount % this.meter === 0) this.barCount += 1;
     }
 
-    return this.getState(bandOnsets, flux, onDownbeat);
+    return this.getState(bandOnsets, flux, onDownbeat, onsetStrength);
   }
 
-  getState(bandOnsets = [false, false, false], flux = 0, onDownbeat = false) {
+  getState(bandOnsets = [false, false, false], flux = 0, onDownbeat = false, onsetStrength = 0) {
     return {
       time: this.time,
       bpm: this.bpm,
@@ -150,6 +161,7 @@ export default class BeatSync {
       barCount: this.barCount,
       confidence: this.confidence,
       flux,
+      onsetStrength: Math.max(0, Math.min(1, onsetStrength)),
       onBass: !!bandOnsets[0],
       onMid: !!bandOnsets[1],
       onTreb: !!bandOnsets[2],

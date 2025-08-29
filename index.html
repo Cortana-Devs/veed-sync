@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Veed Sync — Real‑time Music Visualizer</title>
+  <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barrio&family=Inter:wght@300..900&display=swap" rel="stylesheet">
+  <link rel="prefetch" href="/examples/viz.html" />
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0b1e;
+      --fg: #e5ecf5;
+      --fg-dim: #b7c2d4;
+      --accent: #c0ff33;
+      --glass1: rgba(255,255,255,0.14);
+      --glass2: rgba(255,255,255,0.06);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: radial-gradient(120% 120% at 80% 10%, #0b0d22, #08091a 60%, #070816); color: var(--fg);
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      overflow-x: hidden;
+    }
+    .nav { position: fixed; left: 0; right: 0; top: 0; height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 10; }
+    .brand {
+      display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .2px; text-transform: uppercase;
+      padding: 8px 10px; border-radius: 12px; color: var(--fg);
+      background: linear-gradient(135deg, var(--glass1), var(--glass2)); border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.18);
+      backdrop-filter: blur(10px) saturate(140%); -webkit-backdrop-filter: blur(10px) saturate(140%);
+    }
+    .brand i { color: var(--accent); }
+    .cta {
+      display: inline-grid; place-items:center; padding: 12px 16px; border-radius: 12px; color: #0b0d22; font-weight: 700;
+      background: linear-gradient(135deg, #c0ff33, #9ee401); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 16px 40px rgba(192,255,51,0.28);
+      transform: translateZ(0); transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .cta:hover { transform: translateY(-1px); box-shadow: 0 22px 54px rgba(192,255,51,0.36); }
+
+    .hero { position: relative; min-height: 100vh; display: grid; place-items: center; padding-top: 64px; }
+    .title { text-align: center; margin-bottom: 22px; }
+    .title h1 { font-family: "Barrio", system-ui; font-size: clamp(40px, 7vw, 88px); line-height: .95; margin: 0; letter-spacing: .5px; }
+    .title p { font-size: clamp(14px, 2.2vw, 18px); opacity: .9; margin: 10px 0 0; color: var(--fg-dim); }
+    .chips { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:14px 0 26px; }
+    .chip { display:inline-grid; place-items:center; padding:8px 12px; border-radius: 999px; font-weight:700; cursor:pointer;
+      background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.16); color: var(--fg); transition: transform .12s ease, box-shadow .12s ease; }
+    .chip:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(0,0,0,0.28); }
+
+    .player-wrap { position: relative; width: min(92vw, 1100px); aspect-ratio: 16/9; border-radius: 18px; overflow: hidden;
+      background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.13);
+      box-shadow: 0 28px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.20);
+      transform: perspective(1200px) rotateX(0.6deg) translateY(0) scale(0.985);
+    }
+    .player-wrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
+    .player-chrome { position: absolute; inset: 0; pointer-events: none; }
+    .player-actions { position: absolute; inset: auto 14px 14px 14px; display: flex; gap: 10px; justify-content: flex-end; }
+    .btn {
+      pointer-events: auto; display: grid; place-items:center; width: 44px; height: 44px; border-radius: 12px; cursor: pointer;
+      color: var(--fg); background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.18); transition: transform .12s ease, box-shadow .12s ease;
+      backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%);
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,0.28); }
+    .btn:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+    .btn.mic-on { box-shadow: 0 0 0 2px rgba(192,255,51,0.28), 0 0 18px rgba(192,255,51,0.22), 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .badge { position: absolute; left: 14px; top: 14px; padding: 8px 10px; border-radius: 12px; font-weight: 700;
+      background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.18);
+    }
+    canvas { width: 100%; height: 100%; display: block; }
+    .halo { position: absolute; inset: -30% -20% auto -20%; height: 60%; background: radial-gradient(60% 60% at 50% 50%, rgba(192,255,51,0.25), transparent 60%); filter: blur(50px); opacity: .6; pointer-events: none; }
+    .orb { position:absolute; border-radius: 999px; filter: blur(28px); opacity: .6; mix-blend-mode: screen; pointer-events:none; }
+    .orb.o1 { width: 240px; height: 240px; background: radial-gradient(circle, rgba(80,180,255,0.45), transparent 60%); left: 5%; top: 18%; }
+    .orb.o2 { width: 260px; height: 260px; background: radial-gradient(circle, rgba(255,120,200,0.35), transparent 60%); right: 6%; top: 10%; }
+    .orb.o3 { width: 200px; height: 200px; background: radial-gradient(circle, rgba(192,255,51,0.35), transparent 60%); left: 12%; bottom: 8%; }
+    /* Mobile bottom mini-player (YouTube Music style) */
+    .bottom-panel { position: fixed; left: 0; right: 0; bottom: 0; height: 82px; border-radius: 16px 16px 0 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: 0 -10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18);
+      backdrop-filter: blur(10px) saturate(160%); -webkit-backdrop-filter: blur(10px) saturate(160%);
+      display: none; align-items: center; gap: 12px; padding: 10px 12px; z-index: 12; }
+    .bottom-art { width: 56px; height: 56px; border-radius: 12px; background: radial-gradient(circle, rgba(192,255,51,0.35), transparent 60%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.22); }
+    .bottom-meta { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+    .bottom-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
+    .bottom-sub { font-size: 12px; opacity: .72; }
+    .bottom-controls { display: flex; align-items: center; gap: 10px; }
+    .icobtn { width: 40px; height: 40px; display: grid; place-items:center; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .icobtn i { color: var(--fg); }
+    /* Tinder-like effect deck */
+    .deck { position: fixed; left: 0; right: 0; bottom: 90px; display: none; justify-content: center; perspective: 1400px; z-index: 11; }
+    .deck-inner { position: relative; width: min(92vw, 560px); height: 160px; }
+    .card { position: absolute; top: 0; left: 50%; width: 240px; height: 140px; margin-left: -120px; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18);
+      transform: translate3d(0,0,0) rotateX(8deg) rotateY(0deg) translateY(0) scale(0.94); display: grid; place-items:center; color: var(--fg); font-weight: 800; letter-spacing: .4px; }
+    .card:nth-child(1) { z-index: 3; }
+    .card:nth-child(2) { z-index: 2; transform: translate3d(-120px, 10px, -80px) rotateX(8deg) rotateY(-8deg) scale(0.90); }
+    .card:nth-child(3) { z-index: 1; transform: translate3d(120px, 10px, -80px) rotateX(8deg) rotateY(8deg) scale(0.90); }
+    @media (max-width: 840px) {
+      .nav { height: 56px; }
+      .btn { width: 40px; height: 40px; }
+      .player-actions { inset: auto 12px 12px 12px; }
+      .bottom-panel { display: flex; }
+      .deck { display: flex; }
+      .hero { padding-bottom: 100px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .btn, .cta { transition: none; }
+    }
+  </style>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/motion@11.11.17/dist/motion.js"></script>
+  <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
+</head>
+<body>
+  <div class="nav">
+    <div class="brand"><i class="fa-solid fa-compact-disc"></i> <span>Veed Sync</span></div>
+    <a class="cta" href="#" id="openFull">Open Player</a>
+  </div>
+  <section class="hero">
+    <div class="title">
+      <h1>Feel the Music. <span style="color:var(--accent)">See</span> the Vibe.</h1>
+      <p>Real‑time WebGL visualizer that dances with your sound — viby, cinematic, and wildly alive.</p>
+    </div>
+    <div class="chips" aria-label="Quick vibes">
+      <div class="chip" data-vibe="water"><i class="fa-solid fa-water"></i>&nbsp;Water</div>
+      <div class="chip" data-vibe="party"><i class="fa-solid fa-champagne-glasses"></i>&nbsp;Party</div>
+      <div class="chip" data-vibe="beach"><i class="fa-solid fa-umbrella-beach"></i>&nbsp;Beach</div>
+      <div class="chip" data-vibe="chill"><i class="fa-solid fa-moon"></i>&nbsp;Chill</div>
+      <div class="chip" data-vibe="storm"><i class="fa-solid fa-cloud-bolt"></i>&nbsp;Storm</div>
+    </div>
+    <div class="player-wrap" id="heroPlayer">
+      <div class="halo"></div>
+      <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+      <iframe id="vizFrame" src="/examples/viz.html?embed=1" title="Veed Sync Player" allow="microphone; fullscreen; autoplay" loading="lazy"></iframe>
+      <div class="player-chrome">
+        <div class="badge">Live Preview</div>
+        <div class="player-actions">
+          <button class="btn" id="heroMic" title="Use Mic"><i class="fa-solid fa-microphone"></i></button>
+          <button class="btn" id="heroOpen" title="Open Full"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- Mobile bottom panel + effect deck -->
+  <div class="deck" aria-hidden="false">
+    <div class="deck-inner" id="effectDeck">
+      <div class="card" data-vibe="water">WATER</div>
+      <div class="card" data-vibe="party">PARTY</div>
+      <div class="card" data-vibe="storm">STORM</div>
+    </div>
+  </div>
+  <div class="bottom-panel" role="region" aria-label="Mini player">
+    <div class="bottom-art" id="miniArt"></div>
+    <div class="bottom-meta">
+      <div class="bottom-title">Veed Sync Preview</div>
+      <div class="bottom-sub">Tap to open full player</div>
+    </div>
+    <div class="bottom-controls">
+      <button class="icobtn" id="miniMic" title="Mic"><i class="fa-solid fa-microphone"></i></button>
+      <button class="icobtn" id="miniOpen" title="Open"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { timeline, stagger } from 'https://cdn.jsdelivr.net/npm/motion@11.11.17/dist/motion.mjs';
+
+    const frame = document.getElementById('vizFrame');
+    const wrap = document.getElementById('heroPlayer');
+    const openButtons = [document.getElementById('openFull'), document.getElementById('heroOpen'), document.getElementById('heroPlayer')];
+    const micBtn = document.getElementById('heroMic');
+    const chips = Array.from(document.querySelectorAll('.chip'));
+    const deck = document.getElementById('effectDeck');
+    const miniMic = document.getElementById('miniMic');
+    const miniOpen = document.getElementById('miniOpen');
+
+    function postToViz(msg){
+      try { frame?.contentWindow?.postMessage(msg, '*'); } catch(_) {}
+    }
+    function requestSnapshot(timeout = 400){
+      return new Promise((resolve) => {
+        let done = false;
+        const onMsg = (e) => {
+          const d = e.data;
+          if (d && d.type === 'viz:snapshot') {
+            done = true;
+            window.removeEventListener('message', onMsg);
+            resolve(d.dataUrl || '');
+          }
+        };
+        window.addEventListener('message', onMsg);
+        postToViz({ type: 'viz:getSnapshot' });
+        setTimeout(() => { if (!done) { window.removeEventListener('message', onMsg); resolve(''); } }, timeout);
+      });
+    }
+
+    async function toggleMic(){ postToViz({ type: 'viz:toggleMic' }); }
+    function applyVibeKey(key){ postToViz({ type: 'viz:applyVibe', key }); }
+
+    async function openFullPlayer() {
+      const rect = wrap.getBoundingClientRect();
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.left = rect.left + 'px';
+      overlay.style.top = rect.top + 'px';
+      overlay.style.width = rect.width + 'px';
+      overlay.style.height = rect.height + 'px';
+      overlay.style.borderRadius = getComputedStyle(wrap).borderRadius;
+      overlay.style.background = '#000';
+      overlay.style.zIndex = 99;
+      overlay.style.backgroundSize = 'cover';
+      overlay.style.backgroundPosition = 'center';
+      document.body.appendChild(overlay);
+      // Try to snapshot current frame for buttery transition
+      try {
+        const url = await requestSnapshot(350);
+        if (url) overlay.style.backgroundImage = `url(${url})`;
+      } catch(_) {}
+      // Fade nav & title
+      gsap.to(['.nav', '.title'], { duration: 0.25, opacity: 0.0, ease: 'power2.out' });
+      // Lift the actual card to fixed and animate to fill
+      wrap.style.position = 'fixed';
+      wrap.style.left = rect.left + 'px';
+      wrap.style.top = rect.top + 'px';
+      wrap.style.width = rect.width + 'px';
+      wrap.style.height = rect.height + 'px';
+      wrap.style.margin = '0';
+      wrap.style.zIndex = 100;
+      // Animate overlay + card to viewport
+      gsap.to([overlay, wrap], { duration: 0.5, left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, borderRadius: 0, ease: 'power2.inOut', onComplete: () => {
+        // Reveal full chrome inside iframe
+        postToViz({ type: 'viz:setEmbed', value: false });
+        // Remove the overlay after a short delay
+        setTimeout(() => { try { overlay.remove(); } catch(_) {} }, 120);
+      }});
+    }
+
+    // Animate in hero UI
+    timeline([
+      ['.brand', { y: [-16, 0], opacity: [0, 1] }, { duration: 0.5, at: 0 }],
+      ['.title h1', { y: [20, 0], opacity: [0, 1] }, { duration: 0.6, at: 0.05 }],
+      ['.title p', { y: [18, 0], opacity: [0, 1] }, { duration: 0.6, at: 0.12 }],
+      ['.player-wrap', { opacity: [0, 1], scale: [0.96, 0.98] }, { duration: 0.7, at: 0.15 }],
+      ['.chips .chip', { opacity: [0, 1], y: [10, 0] }, { duration: 0.4, delay: stagger(0.05), at: 0.22 }],
+      ['.player-actions .btn', { opacity: [0, 1], y: [10, 0] }, { duration: 0.4, delay: stagger(0.05), at: 0.26 }],
+    ]);
+
+    // Listeners
+    openButtons.forEach(btn => btn.addEventListener('click', (e) => { e.preventDefault(); openFullPlayer(); }));
+    micBtn.addEventListener('click', toggleMic);
+    // Reflect mic state replies
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (d && d.type === 'viz:mic') {
+        try { d.on ? micBtn.classList.add('mic-on') : micBtn.classList.remove('mic-on'); } catch(_) {}
+      }
+    });
+
+    // Parallax tilt for player card
+    (function attachTilt(){
+      let rect = wrap.getBoundingClientRect();
+      window.addEventListener('resize', () => { rect = wrap.getBoundingClientRect(); });
+      wrap.addEventListener('mousemove', (e) => {
+        const x = (e.clientX - rect.left) / rect.width - 0.5;
+        const y = (e.clientY - rect.top) / rect.height - 0.5;
+        wrap.style.transform = `perspective(1200px) rotateX(${(-y*3+0.6)}deg) rotateY(${x*4}deg) scale(0.985)`;
+      });
+      wrap.addEventListener('mouseleave', () => {
+        wrap.style.transform = 'perspective(1200px) rotateX(0.6deg) translateY(0) scale(0.985)';
+      });
+    })();
+
+    // Chips & deck -> vibes
+    chips.forEach(c => c.addEventListener('click', () => applyVibeKey(c.dataset.vibe)));
+    (function swipeDeck(){
+      if (!deck) return;
+      let startX = 0, cur = 0;
+      const cards = Array.from(deck.children);
+      function layout(){
+        cards.forEach((el,i)=>{
+          const idx = (i - cur);
+          if (idx === 0) { el.style.zIndex = 3; el.style.transform = 'translate3d(0,0,0) rotateX(8deg) rotateY(0deg) translateY(0) scale(0.94)'; }
+          if (idx === -1) { el.style.zIndex = 2; el.style.transform = 'translate3d(-120px,10px,-80px) rotateX(8deg) rotateY(-8deg) scale(0.90)'; }
+          if (idx === 1) { el.style.zIndex = 2; el.style.transform = 'translate3d(120px,10px,-80px) rotateX(8deg) rotateY(8deg) scale(0.90)'; }
+          if (Math.abs(idx) > 1) el.style.transform = 'translate3d(0,40px,-120px) rotateX(12deg) scale(0.86)';
+        });
+      }
+      layout();
+      deck.addEventListener('pointerdown',(e)=>{ startX = e.clientX; deck.setPointerCapture(e.pointerId); });
+      deck.addEventListener('pointerup',(e)=>{
+        const dx = e.clientX - startX;
+        if (dx > 40) cur = Math.max(0, cur - 1);
+        else if (dx < -40) cur = Math.min(cards.length-1, cur + 1);
+        layout();
+        const active = cards[cur];
+        applyVibeKey(active.dataset.vibe);
+      });
+    })();
+
+    // Bottom panel controls
+    if (miniMic) miniMic.addEventListener('click', toggleMic);
+    if (miniOpen) miniOpen.addEventListener('click', (e)=>{ e.preventDefault(); openFullPlayer(); });
+  </script>
+</body>
+</html>
+
+

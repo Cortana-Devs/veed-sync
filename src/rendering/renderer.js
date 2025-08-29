@@ -1090,6 +1090,13 @@ export default class Renderer {
       globalVars.energy = feats.energy;
     }
 
+    // Clamp energy and band values to avoid clutter spikes
+    globalVars.rms = Math.min(2.0, Math.max(0.0, globalVars.rms || 0));
+    globalVars.crest = Math.min(10.0, Math.max(0.0, globalVars.crest || 0));
+    globalVars.bass = Math.min(3.0, Math.max(0.0, globalVars.bass || 0));
+    globalVars.mid = Math.min(3.0, Math.max(0.0, globalVars.mid || 0));
+    globalVars.treb = Math.min(3.0, Math.max(0.0, globalVars.treb || 0));
+
     const mdVSFrame = this.presetEquationRunner.runFrameEquations(globalVars);
 
     this.runPixelEquations(
@@ -1338,11 +1345,12 @@ export default class Renderer {
     // Beat-driven PostFX modulation (subtle, cinematic)
     if (this.beatState) {
       const conf = Math.max(0, Math.min(1, this.beatState.confidence || 0));
-      const onBeatPulse = this.beatState.onBeat ? (0.15 * conf) : 0.0;
+      const onset = Math.max(0, Math.min(1, this.beatState.onsetStrength || 0));
+      const onBeatPulse = (this.beatState.onBeat ? 0.12 : 0.0) * conf + 0.06 * onset;
       const beatSwell = 0.05 * Math.sin(this.beatState.phase * Math.PI * 2);
-      const bassPunch = (this.beatState.onBass ? 0.06 : 0.0) * conf;
-      const trebCrackle = (this.beatState.onTreb ? 0.03 : 0.0) * conf;
-      const downbeatBounce = (this.beatState.onDownbeat ? 0.55 : 0.0) * conf;
+      const bassPunch = ((this.beatState.onBass ? 0.05 : 0.0) + 0.04 * onset) * conf;
+      const trebCrackle = (this.beatState.onTreb ? 0.025 : 0.0) * conf;
+      const downbeatBounce = (this.beatState.onDownbeat ? 0.42 : 0.0) * conf;
 
       const targetFX = {
         exposure: this.postFX.exposure + onBeatPulse + beatSwell,
@@ -1353,12 +1361,12 @@ export default class Renderer {
       };
       // smooth towards target to avoid stepping
       const lerp = (a, b, t) => a * (1 - t) + b * t;
-      const t = 0.15;
+      const t = 0.12;
       this.postFX.exposure = lerp(this.postFX.exposure, targetFX.exposure, t);
       this.postFX.contrast = lerp(this.postFX.contrast, targetFX.contrast, t);
       this.postFX.grain = lerp(this.postFX.grain, targetFX.grain, t);
-      this.postFX.bassShake = lerp(this.postFX.bassShake, targetFX.bassShake, 0.25);
-      this.postFX.zoomBounce = lerp(this.postFX.zoomBounce, targetFX.zoomBounce, 0.25);
+      this.postFX.bassShake = lerp(this.postFX.bassShake, targetFX.bassShake, 0.22);
+      this.postFX.zoomBounce = lerp(this.postFX.zoomBounce, targetFX.zoomBounce, 0.22);
     }
 
     if (this.preset.shapes && this.preset.shapes.length > 0) {

@@ -15,7 +15,8 @@ export default class AudioProcessor {
       this.inputGain.gain.value = 1.0;
 
       this.analyser = context.createAnalyser();
-      this.analyser.smoothingTimeConstant = 0.0;
+      // Keep analyser smoothing low to minimize pre-FFT smear; we use our own temporal smoothing
+      this.analyser.smoothingTimeConstant = 0.02;
       this.analyser.fftSize = this.fftSize;
 
       // Connect processing graph
@@ -24,11 +25,11 @@ export default class AudioProcessor {
 
       // Split channels
       this.analyserL = context.createAnalyser();
-      this.analyserL.smoothingTimeConstant = 0.0;
+      this.analyserL.smoothingTimeConstant = 0.02;
       this.analyserL.fftSize = this.fftSize;
 
       this.analyserR = context.createAnalyser();
-      this.analyserR.smoothingTimeConstant = 0.0;
+      this.analyserR.smoothingTimeConstant = 0.02;
       this.analyserR.fftSize = this.fftSize;
 
       this.splitter = context.createChannelSplitter(2);
@@ -58,7 +59,8 @@ export default class AudioProcessor {
     this.timeArrayR = new Int8Array(this.numSamps);
 
     // User-adjustable smoothing (temporal pre-FFT)
-    this.temporalSmoothing = 0.5; // 0..1, 0 = follow last sample, 1 = follow current sample
+    // A touch more smoothing to reduce harshness without lag
+    this.temporalSmoothing = 0.62; // 0..1, 0 = follow last sample, 1 = follow current sample
   }
 
   sampleAudio() {

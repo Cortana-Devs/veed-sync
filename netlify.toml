@@ -13,6 +13,11 @@
 # The following redirect is intended for use with most SPAs that handle
 # routing internally.
 [[redirects]]
+  from = "/examples/*"
+  to = "/examples/:splat"
+  status = 200
+
+[[redirects]]
   from = "/*"
-  to = "/examples/viz.html"
+  to = "/index.html"
   status = 200

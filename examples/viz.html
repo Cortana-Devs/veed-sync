@@ -57,6 +57,7 @@
     let modelsIndex = null;
     let pendingTapConnect = false;
     let includeClassicLocal = (localStorage.getItem('classicLocal') || '1') === '1';
+    let embedMode = false;
 
     function openModal(id) {
       const el = document.getElementById(id);
@@ -561,6 +562,16 @@
         document.documentElement.style.setProperty('--panel-darken', String(darkBoost * 1.1));
       } catch(_) {}
     }
+    function applyVibeKey(key){
+      try {
+        if (!visualizer || !visualizer.renderer) return;
+        if (key === 'water') visualizer.renderer.applySceneWater?.();
+        else if (key === 'beach') visualizer.renderer.applySceneBeach?.();
+        else if (key === 'party') visualizer.renderer.applySceneParty?.();
+        else if (key === 'chill') visualizer.renderer.setPostFX?.({ saturation: -0.08, tint: [0.94,1.02,1.06], tonemap: 0.6 });
+        else if (key === 'storm') visualizer.renderer.setPostFX?.({ contrast: 0.16, grain: 0.12, tint: [0.96,0.98,1.04] });
+      } catch(_) {}
+    }
 
     function buildPlaylist() {
       const list = document.getElementById('presetList');
@@ -740,6 +751,11 @@
 
     // UI wiring
     window.addEventListener('DOMContentLoaded', () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        embedMode = params.has('embed') || params.get('embed') === '1';
+        if (embedMode) document.body.classList.add('embed');
+      } catch(_) {}
       // Bind DOM refs now that elements exist
       canvas = document.getElementById('canvas');
       hero = document.getElementById('hero');
@@ -1118,6 +1134,38 @@
         }
       })();
     });
+    
+    // Message bridge for iframe embedding
+    window.addEventListener('message', async (event) => {
+      const payload = event && event.data ? event.data : null;
+      const reply = (msg) => { try { event.source && event.source.postMessage(msg, '*'); } catch(_) {} };
+      if (!payload || !payload.type) return;
+      switch (payload.type) {
+        case 'viz:getSnapshot': {
+          let url = '';
+          try { url = (document.getElementById('canvas')?.toDataURL && document.getElementById('canvas').toDataURL('image/png')) || ''; } catch(_) {}
+          reply({ type: 'viz:snapshot', dataUrl: url });
+          break;
+        }
+        case 'viz:toggleMic': {
+          try { if (micConnected) disconnectMic(true); else await connectMic(); } catch(_) {}
+          reply({ type: 'viz:mic', on: !!micConnected });
+          break;
+        }
+        case 'viz:applyVibe': {
+          try { applyVibeKey(payload.key); } catch(_) {}
+          break;
+        }
+        case 'viz:setEmbed': {
+          try {
+            const on = payload.value !== false ? true : false;
+            if (on) document.body.classList.add('embed'); else document.body.classList.remove('embed');
+          } catch(_) {}
+          break;
+        }
+        default: break;
+      }
+    });
   </script>
 
   <style>
@@ -1281,6 +1329,12 @@
       background: #000;
       display: block;
     }
+    /* Embed mode hides chrome */
+    body.embed #topbar,
+    body.embed #bottombar,
+    body.embed #settingsPanel,
+    body.embed #playlistPanel,
+    body.embed #hero { display: none !important; }
 
     #hero {
       position: fixed;
