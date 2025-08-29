@@ -193,6 +193,9 @@ export default class CompShader {
 
     this.userTextures = ShaderUtils.getUserSamplers(fragShaderHeaderText);
 
+    if (this.shaderProgram) {
+      try { this.gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    }
     this.shaderProgram = this.gl.createProgram();
 
     const vertShader = this.gl.createShader(this.gl.VERTEX_SHADER);
@@ -729,6 +732,15 @@ export default class CompShader {
 
   updateShader(shaderText) {
     this.createShader(shaderText);
+  }
+
+  dispose() {
+    const gl = this.gl;
+    try {
+      [this.indexBuf, this.positionVertexBuf, this.compColorVertexBuf].forEach((b) => { if (b) try { gl.deleteBuffer(b); } catch(_) {} });
+      [this.mainSampler, this.mainSamplerFW, this.mainSamplerFC, this.mainSamplerPW, this.mainSamplerPC].forEach((s) => { if (s) try { gl.deleteSampler(s); } catch(_) {} });
+      if (this.shaderProgram) try { gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    } catch(_) {}
   }
 
   bindBlurVals(blurMins, blurMaxs) {

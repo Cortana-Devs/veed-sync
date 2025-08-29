@@ -145,7 +145,7 @@
 <body>
   <div class="nav">
     <div class="brand"><i class="fa-solid fa-compact-disc"></i> <span>Veed Sync</span></div>
-    <a class="cta" href="#" id="openFull">Open Player</a>
+    <!-- Removed top-right "Open Player" button as per requirements -->
   </div>
   <section class="hero">
     <div class="title">
@@ -229,11 +229,11 @@
   </div>
 
   <script type="module">
-    import { timeline, stagger } from 'https://cdn.jsdelivr.net/npm/motion@11.11.17/dist/motion.mjs';
+    import { timeline, stagger, animate } from 'https://cdn.jsdelivr.net/npm/motion@11.11.17/dist/motion.mjs';
 
     const frame = document.getElementById('vizFrame');
     const wrap = document.getElementById('heroPlayer');
-    const openButtons = [document.getElementById('openFull'), document.getElementById('heroOpen'), document.getElementById('heroPlayer')];
+    const openButtons = [document.getElementById('heroOpen')].filter(Boolean);
     const micBtn = document.getElementById('heroMic');
     const chips = Array.from(document.querySelectorAll('.chip'));
     const deck = document.getElementById('effectDeck');
@@ -276,7 +276,9 @@
       overlay.style.zIndex = 99;
       overlay.style.backgroundSize = 'cover';
       overlay.style.backgroundPosition = 'center';
+      overlay.style.opacity = '0';
       document.body.appendChild(overlay);
+      try { animate(overlay, { opacity: [0, 1] }, { duration: 0.24, easing: 'ease-out' }); } catch(_) {}
       // Try to snapshot current frame for buttery transition
       try {
         const url = await requestSnapshot(350);
@@ -294,10 +296,7 @@
       wrap.style.zIndex = 100;
       // Animate overlay + card to viewport
       gsap.to([overlay, wrap], { duration: 0.5, left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, borderRadius: 0, ease: 'power2.inOut', onComplete: () => {
-        // Reveal full chrome inside iframe
-        postToViz({ type: 'viz:setEmbed', value: false });
-        // Remove the overlay after a short delay
-        setTimeout(() => { try { overlay.remove(); } catch(_) {} }, 120);
+        setTimeout(() => { window.location.href = '/examples/viz.html'; }, 80);
       }});
     }
 

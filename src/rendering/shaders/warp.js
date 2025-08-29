@@ -168,6 +168,9 @@ export default class WarpShader {
 
     this.userTextures = ShaderUtils.getUserSamplers(fragShaderHeaderText);
 
+    if (this.shaderProgram) {
+      try { this.gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    }
     this.shaderProgram = this.gl.createProgram();
 
     const vertShader = this.gl.createShader(this.gl.VERTEX_SHADER);
@@ -529,6 +532,15 @@ export default class WarpShader {
     this.createShader(shaderText);
   }
 
+  dispose() {
+    const gl = this.gl;
+    try {
+      [this.indexBuf, this.positionVertexBuf, this.warpUvVertexBuf, this.warpColorVertexBuf].forEach((b) => { if (b) try { gl.deleteBuffer(b); } catch(_) {} });
+      [this.mainSampler, this.mainSamplerFW, this.mainSamplerFC, this.mainSamplerPW, this.mainSamplerPC].forEach((s) => { if (s) try { gl.deleteSampler(s); } catch(_) {} });
+      if (this.shaderProgram) try { gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    } catch(_) {}
+  }
+
   bindBlurVals(blurMins, blurMaxs) {
     const blurMin1 = blurMins[0];
     const blurMin2 = blurMins[1];
@@ -576,18 +588,25 @@ export default class WarpShader {
     this.gl.useProgram(this.shaderProgram);
 
     this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuf);
-    this.gl.bufferData(
-      this.gl.ELEMENT_ARRAY_BUFFER,
-      this.indices,
-      this.gl.STATIC_DRAW
-    );
+    // Static geometry uploaded once; reuse buffer data after first upload
+    if (!this._indicesUploaded || this._indicesUploaded.length !== this.indices.length) {
+      this.gl.bufferData(
+        this.gl.ELEMENT_ARRAY_BUFFER,
+        this.indices,
+        this.gl.STATIC_DRAW
+      );
+      this._indicesUploaded = this.indices;
+    }
 
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionVertexBuf);
-    this.gl.bufferData(
-      this.gl.ARRAY_BUFFER,
-      this.vertices,
-      this.gl.STATIC_DRAW
-    );
+    if (!this._positionsUploaded || this._positionsUploaded.length !== this.vertices.length) {
+      this.gl.bufferData(
+        this.gl.ARRAY_BUFFER,
+        this.vertices,
+        this.gl.STATIC_DRAW
+      );
+      this._positionsUploaded = this.vertices;
+    }
 
     this.gl.vertexAttribPointer(
       this.positionLocation,
@@ -600,7 +619,9 @@ export default class WarpShader {
     this.gl.enableVertexAttribArray(this.positionLocation);
 
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.warpUvVertexBuf);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, warpUVs, this.gl.STATIC_DRAW);
+    // orphan + subdata to avoid stalls
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, warpUVs.byteLength, this.gl.DYNAMIC_DRAW);
+    this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, warpUVs);
 
     this.gl.vertexAttribPointer(
       this.warpUvLocation,
@@ -613,7 +634,8 @@ export default class WarpShader {
     this.gl.enableVertexAttribArray(this.warpUvLocation);
 
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.warpColorVertexBuf);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, warpColor, this.gl.STATIC_DRAW);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, warpColor.byteLength, this.gl.DYNAMIC_DRAW);
+    this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, warpColor);
 
     this.gl.vertexAttribPointer(
       this.warpColorLocation,

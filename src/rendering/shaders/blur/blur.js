@@ -144,7 +144,6 @@ export default class BlurShader {
     );
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.blurHorizontalTexture);
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
 
     this.bindFrambufferAndSetViewport(
       this.blurVerticalFrameBuffer,
@@ -157,6 +156,18 @@ export default class BlurShader {
     );
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.blurVerticalTexture);
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
+    // no mipmap generation for offscreen blur targets
+  }
+
+  dispose() {
+    const gl = this.gl;
+    try {
+      if (this.blurHorizontal && this.blurHorizontal.dispose) this.blurHorizontal.dispose();
+      if (this.blurVertical && this.blurVertical.dispose) this.blurVertical.dispose();
+      if (this.blurHorizontalTexture) gl.deleteTexture(this.blurHorizontalTexture);
+      if (this.blurVerticalTexture) gl.deleteTexture(this.blurVerticalTexture);
+      if (this.blurHorizontalFrameBuffer) gl.deleteFramebuffer(this.blurHorizontalFrameBuffer);
+      if (this.blurVerticalFrameBuffer) gl.deleteFramebuffer(this.blurVerticalFrameBuffer);
+    } catch(_) {}
   }
 }

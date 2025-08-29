@@ -83,7 +83,6 @@ export default class ResampleShader {
 
     this.gl.activeTexture(this.gl.TEXTURE0);
     this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
 
     this.gl.uniform1i(this.textureLoc, 0);
 

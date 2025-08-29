@@ -40,6 +40,9 @@ export default class OutputShader {
 
   // based on https://github.com/mattdesl/glsl-fxaa
   createFXAAShader() {
+    if (this.shaderProgram) {
+      try { this.gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    }
     this.shaderProgram = this.gl.createProgram();
 
     const vertShader = this.gl.createShader(this.gl.VERTEX_SHADER);
@@ -155,6 +158,9 @@ export default class OutputShader {
   }
 
   createShader() {
+    if (this.shaderProgram) {
+      try { this.gl.deleteProgram(this.shaderProgram); } catch(_) {}
+    }
     this.shaderProgram = this.gl.createProgram();
 
     const vertShader = this.gl.createShader(this.gl.VERTEX_SHADER);
@@ -201,6 +207,14 @@ export default class OutputShader {
       this.shaderProgram,
       "uTexture"
     );
+  }
+
+  dispose() {
+    const gl = this.gl;
+    try {
+      if (this.vertexBuf) gl.deleteBuffer(this.vertexBuf);
+      if (this.shaderProgram) gl.deleteProgram(this.shaderProgram);
+    } catch(_) {}
   }
 
   renderQuadTexture(texture) {

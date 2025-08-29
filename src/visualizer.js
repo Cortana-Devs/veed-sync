@@ -25,12 +25,12 @@ export default class Visualizer {
       expectedBpm: (opts && opts.bpm) || 120,
       meter: (opts && opts.meter) || 4,
       divisionsPerBar: (opts && opts.momentDivisions) || [4, 8, 16],
-      swing: (opts && opts.swing) != null ? opts.swing : 0.14,
+      swing: (opts && opts.swing) != null ? opts.swing : 0.10,
       phraseBars: (opts && opts.phraseBars) || 8,
       latencySeconds: (opts && opts.latencySeconds) != null ? opts.latencySeconds : -0.03,
-      cinematicSmoothingPerSecond: (opts && opts.cinematicSmoothingPerSecond) != null ? opts.cinematicSmoothingPerSecond : 0.25,
-      confThreshold: (opts && opts.confThreshold) != null ? opts.confThreshold : 0.55,
-      gateDivision: (opts && opts.gateDivision) || 8,
+      cinematicSmoothingPerSecond: (opts && opts.cinematicSmoothingPerSecond) != null ? opts.cinematicSmoothingPerSecond : 0.18,
+      confThreshold: (opts && opts.confThreshold) != null ? opts.confThreshold : 0.65,
+      gateDivision: (opts && opts.gateDivision) || 4,
     });
     this.captureStreams = [];
     this.noiseSuppressor = null;
@@ -70,9 +70,12 @@ export default class Visualizer {
       ? null
       : canvas.getContext('2d', { willReadFrequently: false });
 
-    // Experimental WebGPU compositor for final blit (optional)
+    // Experimental WebGPU compositor and WebGPU effects
     this.webgpuCompositor = null;
-    if (opts && opts.backend === 'webgpu' && typeof navigator !== 'undefined' && navigator.gpu) {
+    this.webgpuEffectMode = (opts && opts.webgpuEffectMode) || 'off'; // off|post|pure
+    this.webgpuEffectName = (opts && opts.webgpuEffectName) || 'pulsebloom';
+    this.webgpuEffectParams = (opts && opts.webgpuEffectParams) || {};
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
       try { this.webgpuCompositor = new WebGPUCompositor(canvas); } catch(_) {}
     }
 
@@ -319,6 +322,8 @@ export default class Visualizer {
     this.renderer = new Renderer(this.gl, this.audio, opts);
     if (this.renderer && this.renderer.setSyncEngine) this.renderer.setSyncEngine(this.syncEngine);
     if (this.renderer && this.renderer.enableSyncedDefaults) this.renderer.enableSyncedDefaults();
+    // Apply a calmer sync profile by default for better musical feel
+    try { if (this.renderer && this.renderer.applySyncProfile) this.renderer.applySyncProfile('chill'); } catch(_) {}
   }
 
   loseGLContext() {
@@ -407,6 +412,16 @@ export default class Visualizer {
       try { this.noiseSuppressor.dispose(); } catch(_) {}
       this.noiseSuppressor = null;
     }
+  }
+
+  dispose() {
+    try { this.stopAllCaptures(); } catch(_) {}
+    try { if (this.audioNode) this.disconnectAudio(this.audioNode); } catch(_) {}
+    try { if (this.renderer && this.renderer.dispose) this.renderer.dispose(); } catch(_) {}
+    try { if (this.webgpuCompositor && this.webgpuCompositor.dispose) this.webgpuCompositor.dispose(); } catch(_) {}
+    this.audioNode = null;
+    this.gl = null;
+    this.outputGl = null;
   }
 
   // Public API: adjust input sensitivity (gain) applied before analysis
@@ -912,11 +927,63 @@ export default class Visualizer {
   render(opts) {
     const renderOutput = this.renderer.render(opts);
 
+    const mode = this.webgpuEffectMode;
+    if (mode === 'post' && this.webgpuCompositor) {
+      const t = (this.audio && this.audio.audioContext) ? this.audio.audioContext.currentTime : performance.now() / 1000.0;
+      const bs = this.renderer.beatState || {};
+      const uniforms = {
+        resolution: [this.internalCanvas.width, this.internalCanvas.height],
+        time: t,
+        bpm: bs.bpm || 120,
+        beatPhase: bs.phase || 0,
+        barPhase: bs.barPhase || 0,
+        confidence: bs.confidence || 0,
+        flux: bs.flux || 0,
+        band: bs.bandStrengths || [this.renderer.audioLevels.bass_att||0, this.renderer.audioLevels.mid_att||0, this.renderer.audioLevels.treb_att||0],
+        ...this.webgpuEffectParams,
+      };
+      if (!this._wgpuInited) {
+        // lazy init
+        return this.webgpuCompositor.init().then(() => {
+          this._wgpuInited = true;
+          return createImageBitmap(this.internalCanvas).then((bmp) => this.webgpuCompositor.presentPostEffectFromBitmap(bmp, uniforms, this.webgpuEffectName));
+        }).catch(() => {
+          if (this.outputGl) this.outputGl.drawImage(this.internalCanvas, 0, 0);
+          return renderOutput;
+        });
+      }
+      if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(this.internalCanvas).then((bmp) => this.webgpuCompositor.presentPostEffectFromBitmap(bmp, uniforms, this.webgpuEffectName));
+      }
+    }
+
+    if (mode === 'pure' && this.webgpuCompositor) {
+      const ensureInit = this._wgpuInited ? Promise.resolve() : this.webgpuCompositor.init().then(() => { this._wgpuInited = true; });
+      return ensureInit.then(() => {
+        const t = (this.audio && this.audio.audioContext) ? this.audio.audioContext.currentTime : performance.now() / 1000.0;
+        const bs = this.renderer.beatState || {};
+        const uniforms = {
+          resolution: [this.internalCanvas.width, this.internalCanvas.height],
+          time: t,
+          bpm: bs.bpm || 120,
+          beatPhase: bs.phase || 0,
+          barPhase: bs.barPhase || 0,
+          confidence: bs.confidence || 0,
+          flux: bs.flux || 0,
+          band: bs.bandStrengths || [this.renderer.audioLevels.bass_att||0, this.renderer.audioLevels.mid_att||0, this.renderer.audioLevels.treb_att||0],
+          ...this.webgpuEffectParams,
+        };
+        return this.webgpuCompositor.presentPureEffect(uniforms, this.webgpuEffectName === 'vectorscope2d' ? 'vectorscope2d_pure' : 'vectorscope2d_pure');
+      }).catch(() => {
+        if (this.outputGl) this.outputGl.drawImage(this.internalCanvas, 0, 0);
+        return renderOutput;
+      });
+    }
+
+    // Default path: 2D blit
     if (this.outputGl) {
       this.outputGl.drawImage(this.internalCanvas, 0, 0);
     }
-    // Future: if webgpuCompositor present, we could present via ImageBitmap
-
     return renderOutput;
   }
 

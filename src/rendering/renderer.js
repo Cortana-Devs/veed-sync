@@ -59,6 +59,19 @@ export default class Renderer {
     this.invAspectx = 1.0 / this.aspectx;
     this.invAspecty = 1.0 / this.aspecty;
 
+    // Adaptive quality controller
+    this.adaptive = {
+      enabled: true,
+      targetFPS: Math.max(24, Math.min(60, opts.targetFPS || 60)),
+      minTextureRatio: 0.5,
+      maxTextureRatio: 1.0,
+      minBlurPasses: 0,
+      maxBlurPasses: 3,
+      cooldownFrames: 45,
+      _cooldown: 0,
+      _emaFrameMs: 16.7,
+    };
+
     this.qs = Utils.range(1, 33).map((x) => `q${x}`);
     this.ts = Utils.range(1, 9).map((x) => `t${x}`);
     this.regs = Utils.range(0, 100).map((x) => {
@@ -177,7 +190,8 @@ export default class Renderer {
     this._grainSpark = 0;     // grain spark boost
 
     // FX gates (UI-controlled)
-    this.fxGate = { bloom: true, bassShake: true, zoomBounce: true, cameraShots: true };
+    // Calm defaults: disable bassShake by default; keep other cinematic gates
+    this.fxGate = { bloom: true, bassShake: false, zoomBounce: true, cameraShots: true };
 
     // Post FX defaults
     this.postFX = {
@@ -189,11 +203,11 @@ export default class Renderer {
       grain: 0.0,         // 0..1
       grainLuma: 0.75,    // 0..1
       tint: [1.0, 1.0, 1.0],
-      bassShake: 0.0,         // 0..1
-      bassShakeFreq: 2.0,     // Hz
-      bassShakeZoom: 0.05,    // zoom strength
+      bassShake: 0.0,         // 0..1 (kept 0 by default)
+      bassShakeFreq: 1.6,     // Hz (slower)
+      bassShakeZoom: 0.035,   // reduced zoom
       zoomBounce: 0.0,        // 0..1, downbeat bounce zoom
-      zoomBounceFreq: 1.5,    // Hz
+      zoomBounceFreq: 1.3,    // Hz (slower)
     };
 
     // Global dark theme palette (enabled by default). Ensures mostly dark visuals
@@ -211,14 +225,14 @@ export default class Renderer {
 
     // Stability controls to reduce shakiness
     this.stab = {
-      confThreshold: 0.55,            // minimum confidence for strong triggers
-      energyEMAAlpha: 0.06,           // slower energy smoothing
-      eventGateDivision: 8,           // gate reactive bumps on 8ths by default
-      postFXLerp: 0.08,               // slower postFX smoothing
-      postFXImpactScale: 0.7,         // scale down per-beat impact
-      cameraCooldown: 1.6,            // longer cooldown between shots
+      confThreshold: 0.65,
+      energyEMAAlpha: 0.05,
+      eventGateDivision: 4,
+      postFXLerp: 0.06,
+      postFXImpactScale: 0.5,
+      cameraCooldown: 1.9,
       nudgeDecay: { z: 0.94, side: 0.93, fov: 0.94, particles: 0.90, grain: 0.88 },
-      sideWobble: 0.06,               // base side wobble amplitude
+      sideWobble: 0.04,
     };
 
     // Vibe presets
@@ -480,9 +494,17 @@ export default class Renderer {
 
       this.resampleShader.renderQuadTexture(this.targetTexture);
 
+      // delete old target and rebind new
+      this.gl.deleteTexture(this.targetTexture);
       this.targetTexture = targetTextureNew;
 
+      // recreate prev/comp textures at new size
+      this.gl.deleteTexture(this.prevTexture);
+      this.prevTexture = this.gl.createTexture();
       this.bindFrameBufferTexture(this.prevFrameBuffer, this.prevTexture);
+
+      this.gl.deleteTexture(this.compTexture);
+      this.compTexture = this.gl.createTexture();
       this.bindFrameBufferTexture(this.compFrameBuffer, this.compTexture);
     }
 
@@ -592,6 +614,11 @@ export default class Renderer {
       const damping = 0.93;
       this.fps = damping * this.fps + (1.0 - damping) * newFPS;
     }
+
+    // Update adaptive EMA of frame ms using audio-derived time increments
+    const dtMs = 1000.0 / Math.max(1, this.fps);
+    const alpha = 0.10;
+    this.adaptive._emaFrameMs = (1 - alpha) * this.adaptive._emaFrameMs + alpha * dtMs;
   }
 
   runPixelEquations(presetEquationRunner, mdVSFrame, globalVars, blending) {
@@ -978,16 +1005,7 @@ export default class Renderer {
       this.gl.TEXTURE_MAG_FILTER,
       this.gl.LINEAR
     );
-    if (this.anisoExt) {
-      const max = this.gl.getParameter(
-        this.anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT
-      );
-      this.gl.texParameterf(
-        this.gl.TEXTURE_2D,
-        this.anisoExt.TEXTURE_MAX_ANISOTROPY_EXT,
-        max
-      );
-    }
+    // No anisotropic filtering on offscreen render targets
 
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, targetFrameBuffer);
     this.gl.framebufferTexture2D(
@@ -1098,6 +1116,13 @@ export default class Renderer {
       globalVars.on_bass = this.beatState.onBass ? 1 : 0;
       globalVars.on_mid = this.beatState.onMid ? 1 : 0;
       globalVars.on_treb = this.beatState.onTreb ? 1 : 0;
+      // Distinctive features for presets to use
+      globalVars.on_kick = this.beatState.onKick ? 1 : 0;
+      globalVars.on_snare = this.beatState.onSnare ? 1 : 0;
+      globalVars.on_hat = this.beatState.onHat ? 1 : 0;
+      globalVars.section_change = this.beatState.sectionChange ? 1 : 0;
+      globalVars.energy = this.beatState.energy || 0;
+      globalVars.centroid = this.beatState.centroid || 0;
     } else {
       globalVars.beat_phase = 0;
       globalVars.bar_phase = 0;
@@ -1109,6 +1134,12 @@ export default class Renderer {
       globalVars.on_bass = 0;
       globalVars.on_mid = 0;
       globalVars.on_treb = 0;
+      globalVars.on_kick = 0;
+      globalVars.on_snare = 0;
+      globalVars.on_hat = 0;
+      globalVars.section_change = 0;
+      globalVars.energy = 0;
+      globalVars.centroid = 0;
     }
 
     // Provide unified moment globals
@@ -1376,23 +1407,25 @@ export default class Renderer {
       this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
     }
 
-    // Beat-driven PostFX modulation (subtle, cinematic)
+    // Beat-driven PostFX modulation (subtle, cinematic) using distinctive features
     if (this.beatState) {
       const conf = Math.max(0, Math.min(1, this.beatState.confidence || 0));
       const onset = Math.max(0, Math.min(1, this.beatState.onsetStrength || 0));
       const bandS = this.beatState.bandStrengths || [0,0,0];
       const scale = this.stab.postFXImpactScale || 0.7;
-      // Pulses: make visuals feel like dancing to music
-      const onBeatPulse = ((this.beatState.onBeat ? 0.10 : 0.0) * conf + 0.06 * onset) * scale;
-      const beatSwell = (0.045 * Math.sin(this.beatState.phase * Math.PI * 2)) * scale;
-      const bassPunch = ((0.03 + 0.05 * bandS[0]) * conf) * scale;
-      const trebCrackle = ((0.012 + 0.02 * bandS[2]) * conf) * scale;
-      const downbeatBounce = ((this.beatState.onDownbeat ? (0.18 + 0.22 * conf) : 0.0)) * scale;
+      // Use kick/snare/hat cues for coordinated motion
+      const kickPulse = (this.beatState.onKick ? (0.08 + 0.06 * bandS[0]) : 0.0) * conf * scale;
+      const snareSnap = (this.beatState.onSnare ? (0.05 + 0.04 * bandS[1]) : 0.0) * conf * scale;
+      const hatShimmer = (this.beatState.onHat ? (0.008 + 0.012 * bandS[2]) : 0.0) * conf * scale;
+      const onBeatPulse = ((this.beatState.onBeat ? 0.06 : 0.0) * conf + 0.05 * onset) * scale;
+      const downbeatBounce = ((this.beatState.onDownbeat ? (0.14 + 0.16 * conf) : 0.0)) * scale;
+      const sectionLift = (this.beatState.sectionChange ? 0.12 : 0.0) * scale;
+      const beatSwell = (0.035 * Math.sin(this.beatState.phase * Math.PI * 2)) * scale;
 
       const targetFX = {
-        exposure: this.postFX.exposure + onBeatPulse + beatSwell,
-        contrast: this.postFX.contrast + bassPunch,
-        grain: Math.max(0, this.postFX.grain + trebCrackle),
+        exposure: this.postFX.exposure + onBeatPulse + kickPulse + sectionLift + beatSwell,
+        contrast: this.postFX.contrast + snareSnap,
+        grain: Math.max(0, this.postFX.grain + hatShimmer),
         bassShake: (this.fxGate?.bassShake === false) ? 0 : Math.min(1.0, Math.max(0.0, (this.beatState.onBass ? 0.65 : 0.0) * conf)),
         zoomBounce: (this.fxGate?.zoomBounce === false) ? 0 : Math.min(1.0, Math.max(0.0, downbeatBounce)),
       };
@@ -1515,6 +1548,40 @@ export default class Renderer {
     this.mdVSFrameMixed = mdVSFrameMixed;
 
     this.renderToScreen();
+
+    // Adaptive quality adjust after frame
+    if (this.adaptive.enabled && this.frameNum % 2 === 0) {
+      const a = this.adaptive;
+      if (a._cooldown > 0) a._cooldown--;
+      const targetMs = 1000.0 / a.targetFPS;
+      const budgetSlack = targetMs - a._emaFrameMs;
+      // If underperforming consistently, lower quality; if overperforming, cautiously raise
+      if (a._cooldown === 0) {
+        if (budgetSlack < -1.5) {
+          // downscale textures first
+          const newTR = Math.max(a.minTextureRatio, this.textureRatio * 0.9);
+          if (newTR < this.textureRatio - 1e-6) {
+            this.setRendererSize(this.width, this.height, { pixelRatio: this.pixelRatio, textureRatio: newTR });
+            a._cooldown = a.cooldownFrames;
+          } else if (this.numBlurPasses > a.minBlurPasses) {
+            this.numBlurPasses = Math.max(a.minBlurPasses, this.numBlurPasses - 1);
+            a._cooldown = a.cooldownFrames;
+          }
+        } else if (budgetSlack > 2.0) {
+          // upscale cautiously
+          if (this.numBlurPasses < a.maxBlurPasses) {
+            this.numBlurPasses = Math.min(a.maxBlurPasses, this.numBlurPasses + 1);
+            a._cooldown = a.cooldownFrames;
+          } else {
+            const newTR = Math.min(a.maxTextureRatio, this.textureRatio * 1.05);
+            if (newTR > this.textureRatio + 1e-6) {
+              this.setRendererSize(this.width, this.height, { pixelRatio: this.pixelRatio, textureRatio: newTR });
+              a._cooldown = a.cooldownFrames;
+            }
+          }
+        }
+      }
+    }
   }
 
   renderToScreen() {
@@ -1595,9 +1662,6 @@ export default class Renderer {
     }
 
     if (this.outputFXAA) {
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.compTexture);
-      this.gl.generateMipmap(this.gl.TEXTURE_2D);
-
       this.bindFrambufferAndSetViewport(null, this.width, this.height);
       this.outputShader.renderQuadTexture(this.compTexture);
     }
@@ -1952,5 +2016,24 @@ export default class Renderer {
     context.putImageData(imageData, 0, 0);
 
     return canvas.toDataURL();
+  }
+
+  dispose() {
+    const gl = this.gl;
+    if (!gl) return;
+    try {
+      // Shaders and helpers
+      [this.warpShader, this.prevWarpShader, this.compShader, this.prevCompShader, this.outputShader, this.blurShader1, this.blurShader2, this.blurShader3, this.basicWaveform, this.darkenCenter, this.innerBorder, this.outerBorder, this.motionVectors, this.titleText, this.particles, this.particleModel, this.particleModelPrev, this.resampleShader].forEach((s) => {
+        if (s && s.dispose) { try { s.dispose(); } catch(_) {} }
+      });
+      // Textures
+      try { gl.deleteTexture(this.prevTexture); } catch(_) {}
+      try { gl.deleteTexture(this.targetTexture); } catch(_) {}
+      try { gl.deleteTexture(this.compTexture); } catch(_) {}
+      // Framebuffers
+      try { gl.deleteFramebuffer(this.prevFrameBuffer); } catch(_) {}
+      try { gl.deleteFramebuffer(this.targetFrameBuffer); } catch(_) {}
+      try { gl.deleteFramebuffer(this.compFrameBuffer); } catch(_) {}
+    } catch(_) {}
   }
 }

@@ -62,6 +62,216 @@
     let pendingTapConnect = false;
     let includeClassicLocal = (localStorage.getItem('classicLocal') || '1') === '1';
     let embedMode = false;
+    // Dancers runtime state
+    const Dancers = (function(){
+      const layerId = 'dancersLayer';
+      let layerEl = null;
+      let enabled = false;
+      let list = [];
+      let listWebp = [];
+      let spawnTimer = 0;
+      let lastT = 0;
+      const maxOnScreen = 2;
+      const minLifeSec = 5;
+      const minDistPx = 120; // don't allow centers closer than this
+      const basePath = '../assets/dancing_GIF/';
+      const baseWebp = '../assets/dancing_WEBP/';
+      async function init(){
+        if (!layerEl) layerEl = document.getElementById(layerId);
+        if (!layerEl) return;
+        // Try to load index.json fallback to simple directory probe list
+        try {
+          const res = await fetch(basePath + 'index.json', { cache: 'no-cache' });
+          if (res.ok) {
+            const j = await res.json();
+            let arr = Array.isArray(j) ? j : (Array.isArray(j.files) ? j.files : []);
+            // Normalize entries (strings only)
+            list = arr.map((x) => typeof x === 'string' ? x : (x?.file || x?.name || '')).filter(Boolean);
+          }
+        } catch(_) {}
+        try {
+          const res2 = await fetch(baseWebp + 'index.json', { cache: 'no-cache' });
+          if (res2.ok) {
+            const j2 = await res2.json();
+            let arr2 = Array.isArray(j2) ? j2 : (Array.isArray(j2.files) ? j2.files : []);
+            listWebp = arr2.map((x) => typeof x === 'string' ? x : (x?.file || x?.name || '')).filter(Boolean);
+          }
+        } catch(_) {}
+        // Fallback lazy probe if index missing or empty: try to request a handful of known filenames
+        if (!list || list.length === 0) {
+          const probes = [
+            'bubu-rub-bubu-love-dudu.gif','bubu-dudu-dudu-dance.gif','bubu-cute-dancing.gif','aqua-dancing-maxgames331535.gif'
+          ];
+          const ok = [];
+          await Promise.all(probes.map(async (f)=>{
+            try { const head = await fetch(basePath + f, { method: 'HEAD', cache: 'no-cache' }); if (head.ok) ok.push(f); } catch(_) {}
+          }));
+          list = ok;
+        }
+      }
+      function pick(){
+        const pools = [];
+        if (list && list.length) pools.push({ base: basePath, arr: list });
+        if (listWebp && listWebp.length) pools.push({ base: baseWebp, arr: listWebp });
+        if (!pools.length) return null;
+        const p = pools[Math.floor(Math.random()*pools.length)];
+        const i = Math.floor(Math.random()*p.arr.length);
+        return { base: p.base, file: p.arr[i] };
+      }
+      function getQuadrants(){
+        const b = layerEl.getBoundingClientRect();
+        const hw = Math.floor(b.width / 2);
+        const hh = Math.floor(b.height / 2);
+        return [
+          { x: 0, y: 0, w: hw, h: hh, cx: hw/2, cy: hh/2 },               // TL (0)
+          { x: hw, y: 0, w: b.width-hw, h: hh, cx: hw + (b.width-hw)/2, cy: hh/2 }, // TR (1)
+          { x: 0, y: hh, w: hw, h: b.height-hh, cx: hw/2, cy: hh + (b.height-hh)/2 }, // BL (2)
+          { x: hw, y: hh, w: b.width-hw, h: b.height-hh, cx: hw + (b.width-hw)/2, cy: hh + (b.height-hh)/2 }, // BR (3)
+        ];
+      }
+      function createDancer(quadIndex, beatState){
+        if (!layerEl) return null;
+        const sel = pick(); if (!sel) return null; const url = sel.file.startsWith('http') ? sel.file : (sel.base + sel.file);
+        const qs = getQuadrants(); const q = qs[Math.max(0, Math.min(3, quadIndex|0))];
+        const existing = Array.from(layerEl.querySelectorAll('.dancer'));
+        for (let attempt=0; attempt<4; attempt++){
+          const el = document.createElement('img'); el.className = 'dancer'; el.alt = 'dancer'; el.decoding = 'async'; el.loading = 'lazy'; el.src = url;
+          const z = Math.random();
+          // Size strictly relative to quadrant: reduced scale for less clutter
+          const maxFitW = q.w * 0.68; // tighter fit within quadrant
+          const minFitW = Math.max(120, q.w * 0.38);
+          const baseW = minFitW + (maxFitW - minFitW) * (0.4 + 0.6*z); // deeper smaller, foreground larger
+          const w = Math.round(Math.max(120, Math.min(320, baseW)));
+          const jitterX = (q.w * 0.10) * (Math.random()*2-1);
+          const jitterY = (q.h * 0.08) * (Math.random()*2-1);
+          const cx = q.cx + jitterX; const cy = q.cy + jitterY;
+          const x = Math.round(Math.max(q.x+10, Math.min(q.x + q.w - w - 10, cx - w/2)));
+          const y = Math.round(Math.max(q.y+10, Math.min(q.y + q.h - (w*1.1) - 10, cy - (w*1.1)/2)));
+          // one per quadrant rule
+          if (existing.some((e)=> (e.dataset.quad === String(quadIndex)))) { return null; }
+          // proximity rule
+          let ok = true;
+          for (const other of existing){
+            const ox = parseFloat(other.style.left||'0');
+            const oy = parseFloat(other.style.top||'0');
+            const ow = parseFloat(other.style.width||'120');
+            const ocx = ox + ow/2; const ocy = oy + (ow*1.2)/2;
+            const dist = Math.hypot((x+w/2)-ocx, (y+(w*1.1)/2)-ocy);
+            if (dist < minDistPx) { ok = false; break; }
+            if (other.getAttribute('src') === url && dist < (minDistPx*1.5)) { ok = false; break; }
+          }
+          if (!ok) continue;
+          el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.width = w + 'px';
+          const mirrored = Math.random()<0.5; el.style.setProperty('--mx', mirrored ? '-1' : '1');
+          el.style.setProperty('--sx', String(0.85 + Math.random()*0.25)); el.style.setProperty('--rot', (Math.random()*10-5) + 'deg');
+          // Portal rotation: start edge-on, then rotate to face-forward
+          el.style.setProperty('--ry', (Math.random()<0.5 ? '90deg' : '-90deg'));
+          el.style.opacity = '0';
+          const zIndex = 5 + Math.floor(z * 4);
+          el.style.zIndex = String(zIndex);
+          // Fade-in target and portal setup
+          const targetOpacity = 0.85 + 0.15 * z;
+          el.dataset.targetOpacity = String(targetOpacity);
+          el.style.opacity = '0';
+          if (z < 0.35) { el.style.mixBlendMode = 'multiply'; el.style.filter = 'blur(0.6px) saturate(1.0) drop-shadow(0 8px 24px rgba(0,0,0,0.35))'; }
+          else if (z < 0.65) { el.style.mixBlendMode = 'overlay'; el.style.filter = 'saturate(1.1) drop-shadow(0 8px 24px rgba(0,0,0,0.35))'; }
+          else { el.style.mixBlendMode = 'screen'; el.style.filter = 'saturate(1.2) drop-shadow(0 8px 24px rgba(0,0,0,0.35))'; }
+          el.dataset.createdAt = String(performance.now()/1000);
+          el.dataset.lifeSec = String(5 + Math.random()*5);
+          el.dataset.quad = String(quadIndex);
+          // Portal entry: start edge-on and disable keyframes to let CSS transition control rotateY
+          const rySign = (Math.random()<0.5 ? -1 : 1);
+          el.dataset.rySign = String(rySign);
+          el.style.setProperty('--ry', (rySign > 0 ? '90deg' : '-90deg'));
+          el.classList.add('no-tx');
+          layerEl.appendChild(el);
+          const emerge = () => {
+            el.classList.add('in');
+            requestAnimationFrame(()=>{
+              el.style.setProperty('--ry', '0deg');
+              // drive opacity via inline style so it transitions regardless of class specificity
+              const to = parseFloat(el.dataset.targetOpacity || '1');
+              el.style.opacity = String(to);
+              const onEnd = (ev) => { if (ev.propertyName === 'transform') { el.classList.remove('no-tx'); el.removeEventListener('transitionend', onEnd); } };
+              el.addEventListener('transitionend', onEnd);
+              setTimeout(()=>{ el.classList.remove('no-tx'); }, 900); // safety
+            });
+          };
+          if (beatState && (beatState.onDownbeat || beatState.onKick)) requestAnimationFrame(emerge);
+          else setTimeout(emerge, 120 + Math.random()*420);
+          return el;
+        }
+        return null;
+      }
+      function removeDancer(el){ if (!el) return; el.classList.remove('in');
+        // Exit via portal: rotate back to edge-on and fade out, with controlled transition
+        const rySign = parseInt(el.dataset.rySign || (Math.random()<0.5 ? '-1' : '1'), 10);
+        el.classList.add('no-tx');
+        el.classList.add('out');
+        requestAnimationFrame(()=>{
+          el.style.setProperty('--ry', (rySign > 0 ? '90deg' : '-90deg'));
+          el.style.opacity = '0';
+          const cleanup = () => { try { el.remove(); } catch(_){} };
+          const onEnd = (ev) => { if (ev.propertyName === 'transform') { el.removeEventListener('transitionend', onEnd); cleanup(); } };
+          el.addEventListener('transitionend', onEnd);
+          setTimeout(cleanup, 900);
+        });
+      }
+      function enable(on){ enabled = !!on; if (!layerEl) layerEl = document.getElementById(layerId); if (!enabled && layerEl) { Array.from(layerEl.querySelectorAll('.dancer')).forEach(removeDancer); } }
+      function tick(dt, beatState){ if (!enabled || !layerEl) return; spawnTimer -= dt; // spawn on downbeat or timer
+        const onDown = beatState && beatState.onDownbeat; const conf = beatState ? (beatState.confidence||0) : 0;
+        let have = layerEl.querySelectorAll('.dancer').length;
+        // desired count per spawn: 1..3
+        const groupSize = 1 + Math.floor(Math.random()*2); // 1..2 only
+        // ensure at least one dancer when enabled
+        const target = Math.max(1, Math.min(maxOnScreen, groupSize));
+        if (((onDown && Math.random()<0.7) || spawnTimer<=0 || have === 0) && have < maxOnScreen) {
+          const quads = ['0','1','2','3'];
+          const occ = new Set(Array.from(layerEl.querySelectorAll('.dancer')).map(d=>d.dataset.quad).filter(Boolean));
+          const free = quads.filter(q => !occ.has(q));
+          // ensure at least one empty quadrant: cap spawns to free.length-1 if needed
+          const maxSpawn = Math.max(0, Math.min(target - have, Math.max(0, Math.min(2, free.length - 1))));
+          // if nothing free but have < target, retire oldest beyond minLife to free one
+          if (maxSpawn === 0 && have === 0) {
+            // no dancers: allow placing into any quad
+            free.push('0','1','2','3');
+          }
+          let count = 0;
+          const toSpawn = Math.max(0, Math.min(maxSpawn, Math.max(0, maxOnScreen - have)));
+          while (count < toSpawn && free.length) {
+            const idx = Math.floor(Math.random()*free.length);
+            const q = parseInt(free.splice(idx,1)[0], 10);
+            const made = createDancer(q, beatState);
+            if (made) { have++; count++; }
+          }
+          spawnTimer = 3.0; // 3s delay between spawns
+        }
+        // random retire and cinematic jitter
+        Array.from(layerEl.querySelectorAll('.dancer')).forEach((el)=>{
+          // minimum lifetime guard
+          const createdAt = parseFloat(el.dataset.createdAt||'0');
+          const lifeSec = parseFloat(el.dataset.lifeSec||'8');
+          const alive = (performance.now()/1000) - createdAt;
+          if (alive > lifeSec) removeDancer(el);
+          else if (layerEl.querySelectorAll('.dancer').length > target && alive > 5 && Math.random()<0.05) removeDancer(el);
+          else {
+            // light beat jitter, cinematic punch on strong kicks
+            if (beatState && beatState.onBeat) {
+              const r = (Math.random()*2-1)*4; const s = 0.94 + Math.random()*0.12; el.style.setProperty('--rot', r+'deg'); el.style.setProperty('--sx', String(s));
+              // subtle hue pop on hats
+              if (beatState.onHat) el.style.filter = 'hue-rotate(' + Math.floor(Math.random()*60-30) + 'deg) saturate(1.25) drop-shadow(0 8px 24px rgba(0,0,0,0.35))';
+              else el.style.filter = 'drop-shadow(0 8px 24px rgba(0,0,0,0.35)) saturate(1.05)';
+            }
+            if (beatState && beatState.onKick) {
+              // brief scale pulse (reduced)
+              el.style.setProperty('--sx', String(1.08 + Math.random()*0.14));
+            }
+          }
+        });
+      }
+      return { init, enable, tick };
+    })();
+    window.Dancers = Dancers;
 
     function openModal(id) {
       const el = document.getElementById(id);
@@ -172,7 +382,8 @@
         let dt = 0;
         if (lastAudioT != null) dt = Math.max(1/240, Math.min(0.2, t - lastAudioT));
         lastAudioT = t;
-        visualizer.render({ elapsedTime: dt });
+        const res = visualizer.render({ elapsedTime: dt });
+        try { Dancers.tick(dt, visualizer?.renderer?.beatState || null); } catch(_) {}
         // After render, adapt glass opacity based on current frame luminance
         updateGlassOpacity();
         rafId = requestAnimationFrame(loop);
@@ -470,6 +681,14 @@
 
       const backend = backendPref === 'webgpu-exp' ? 'webgpu' : backendPref;
 
+      // WebGPU effects prefs
+      const wgpuModeSel = document.getElementById('settingWgpuMode');
+      const wgpuEffectSel = document.getElementById('settingWgpuEffect');
+      const wgpuP1El = document.getElementById('settingWgpuP1');
+      const wgpuMode = wgpuModeSel ? wgpuModeSel.value : (localStorage.getItem('wgpuMode') || 'off');
+      const wgpuEffect = wgpuEffectSel ? wgpuEffectSel.value : (localStorage.getItem('wgpuEffect') || 'pulsebloom');
+      const wgpuP1 = wgpuP1El ? parseFloat(wgpuP1El.value || '0.5') : parseFloat(localStorage.getItem('wgpuP1') || '0.5');
+
       // Stop current renderer loop
       const wasRendering = rendering;
       stopRenderer();
@@ -481,7 +700,10 @@
         pixelRatio: window.devicePixelRatio || 1,
         textureRatio: 1,
         backend,
-        directCanvas: direct
+        directCanvas: direct,
+        webgpuEffectMode: wgpuMode,
+        webgpuEffectName: wgpuEffect,
+        webgpuEffectParams: { param1: wgpuP1 }
       });
 
       // Reconnect audio tap if present
@@ -627,7 +849,10 @@
       keysForList.forEach((key) => {
         const i = presetKeys.indexOf(key);
         const li = document.createElement('li');
-        li.textContent = key.substring(0, 80);
+        const title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = key;
+        li.appendChild(title);
         li.dataset.index = i;
         if (isDisabled(key)) li.classList.add('disabled');
         const action = document.createElement('button');
@@ -709,6 +934,32 @@
         }
       };
       await mergeClassic();
+      // Optionally load new preset pack if toggled
+      async function rebuildPresets(newOnly){
+        presets = {};
+        if (!newOnly) {
+          if (window.base && window.base.default) Object.assign(presets, window.base.default);
+          if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
+        }
+        try {
+          const res = await fetch('../assets/new-presets/index.json', { cache: 'no-cache' });
+          if (res.ok) {
+            const list = await res.json();
+            for (const item of list) {
+              try { const r = await fetch(encodeURI(item.path)); if (r.ok) presets[item.name] = await r.json(); } catch(_) {}
+            }
+          }
+        } catch(_) {}
+        // sort and rebuild keys
+        const entries = Object.entries(presets);
+        entries.sort((a, b) => a[0].toLowerCase().localeCompare(b[0].toLowerCase()));
+        presets = Object.fromEntries(entries);
+        presetKeys = entries.map(([k]) => k);
+        presetIndex = Math.min(presetIndex, Math.max(0, presetKeys.length - 1));
+      }
+      window.rebuildPresets = rebuildPresets;
+      const newOnlyInit = (localStorage.getItem('newPresetsOnly') || '0') === '1';
+      if (newOnlyInit) { await rebuildPresets(true); }
       // Sort presets case-insensitively without relying on lodash
       {
         const entries = Object.entries(presets);
@@ -840,6 +1091,8 @@
       // Wire UI first; initialize player after to avoid blocking buttons if init errors
       // Init luminance probe for adaptive glass opacity
       initLuminanceProbe();
+      // Init dancers
+      Dancers.init();
 
       document.getElementById('micBtn').addEventListener('click', () => {
         if (micConnected) disconnectMic(true); else connectMic();
@@ -870,7 +1123,7 @@
       document.getElementById('backArrowBtn').addEventListener('click', () => prevPreset());
 
       document.getElementById('fullscreenBtn').addEventListener('click', () => {
-        const el = canvas;
+        const el = document.getElementById('stage') || canvas;
         if (!document.fullscreenElement) {
           if (el.requestFullscreen) el.requestFullscreen();
         } else {
@@ -882,6 +1135,20 @@
         playlistPanel.classList.toggle('open');
         announce(playlistPanel.classList.contains('open') ? 'Opened preset list' : 'Closed preset list');
       });
+      // Quick dance toggle button
+      const danceBtn = document.getElementById('danceBtn');
+      if (danceBtn) {
+        const applyDanceBtn = (on) => { try { on ? danceBtn.classList.add('dance-on') : danceBtn.classList.remove('dance-on'); } catch(_) {} };
+        const storedDance = (localStorage.getItem('dancersOn') || '0') === '1';
+        applyDanceBtn(storedDance);
+        danceBtn.addEventListener('click', () => {
+          const now = !(localStorage.getItem('dancersOn') === '1');
+          try { localStorage.setItem('dancersOn', now ? '1' : '0'); } catch(_) {}
+          try { window.Dancers && window.Dancers.enable(now); } catch(_) {}
+          applyDanceBtn(now);
+          showToast(`Dancing ${now ? 'enabled' : 'disabled'}`);
+        });
+      }
       // Playlist controls: hide disabled, reset
       const playlistPanelEl = document.getElementById('playlistPanel');
       if (playlistPanelEl) {
@@ -1027,12 +1294,12 @@
       try {
         if (fxBloom) fxBloom.checked = (localStorage.getItem('fxBloom') || '1') === '1';
         if (fxBloomStrength) fxBloomStrength.value = String(localStorage.getItem('fxBloomStrength') || '0.4');
-        if (fxBassShake) fxBassShake.checked = (localStorage.getItem('fxBassShake') || '1') === '1';
+        if (fxBassShake) fxBassShake.checked = (localStorage.getItem('fxBassShake') || '0') === '1';
         if (fxShakeFreq) fxShakeFreq.value = String(localStorage.getItem('fxShakeFreq') || '2.5');
-        if (fxShakeZoom) fxShakeZoom.value = String(localStorage.getItem('fxShakeZoom') || '0.06');
+        if (fxShakeZoom) fxShakeZoom.value = String(localStorage.getItem('fxShakeZoom') || '0.035');
         if (fxZoomBounce) fxZoomBounce.checked = (localStorage.getItem('fxZoomBounce') || '1') === '1';
         if (fxCameraShots) fxCameraShots.checked = (localStorage.getItem('fxCameraShots') || '1') === '1';
-        if (fxBounceFreq) fxBounceFreq.value = String(localStorage.getItem('fxBounceFreq') || '1.6');
+        if (fxBounceFreq) fxBounceFreq.value = String(localStorage.getItem('fxBounceFreq') || '1.3');
         if (fxQuant) fxQuant.checked = (localStorage.getItem('fxQuantize') || '1') === '1';
         if (fxAutoVibe) fxAutoVibe.checked = (localStorage.getItem('fxAutoVibe') || '1') === '1';
         if (fxVibeBars) fxVibeBars.value = String(localStorage.getItem('fxVibeBars') || '4');
@@ -1082,6 +1349,9 @@
       // Backend controls
       const backendSel = document.getElementById('settingBackend');
       const directCb = document.getElementById('settingDirect');
+      const wgpuModeSel = document.getElementById('settingWgpuMode');
+      const wgpuEffectSel = document.getElementById('settingWgpuEffect');
+      const wgpuP1El = document.getElementById('settingWgpuP1');
       const particleCb = document.getElementById('settingParticles');
       const particleNum = document.getElementById('settingParticleCount');
       const monitorCb = document.getElementById('settingMonitor');
@@ -1099,6 +1369,22 @@
         const storedD = (localStorage.getItem('directDraw') || '0') === '1';
         directCb.checked = storedD;
         directCb.addEventListener('change', () => { reinitVisualizer(); });
+      }
+      // WebGPU controls
+      if (wgpuModeSel) {
+        const stored = localStorage.getItem('wgpuMode') || 'off';
+        wgpuModeSel.value = stored;
+        wgpuModeSel.addEventListener('change', (e) => { localStorage.setItem('wgpuMode', e.target.value); reinitVisualizer(); });
+      }
+      if (wgpuEffectSel) {
+        const stored = localStorage.getItem('wgpuEffect') || 'pulsebloom';
+        wgpuEffectSel.value = stored;
+        wgpuEffectSel.addEventListener('change', (e) => { localStorage.setItem('wgpuEffect', e.target.value); reinitVisualizer(); });
+      }
+      if (wgpuP1El) {
+        const stored = localStorage.getItem('wgpuP1') || '0.5';
+        wgpuP1El.value = stored;
+        wgpuP1El.addEventListener('change', (e) => { localStorage.setItem('wgpuP1', String(e.target.value || '0.5')); reinitVisualizer(); });
       }
       if (particleCb) {
         const pOn = (localStorage.getItem('particlesOn') || '0') === '1';
@@ -1118,6 +1404,19 @@
           showToast(`Particles: ${val}`);
         });
       }
+      // New presets only
+      (function wireNewPresets(){
+        const cb = document.getElementById('settingNewPresetsOnly');
+        if (!cb) return;
+        const stored = (localStorage.getItem('newPresetsOnly') || '0') === '1';
+        cb.checked = stored;
+        cb.addEventListener('change', async (e) => {
+          const on = !!e.target.checked; try { localStorage.setItem('newPresetsOnly', on ? '1' : '0'); } catch(_) {}
+          await rebuildPresets(on);
+          buildPlaylist();
+          showToast(on ? 'New preset pack enabled' : 'All presets');
+        });
+      })();
       if (monitorCb) {
         const storedM = (localStorage.getItem('monitorAudio') || '1') === '1';
         monitorCb.checked = storedM;
@@ -1184,6 +1483,23 @@
           showToast(`Mode: ${e.target.checked ? 'Model-only' : 'Mixed'}`);
         });
       }
+      // Dancers toggle (settings)
+      (function wireDancersToggle(){
+        const dancersCb = document.getElementById('settingDancers');
+        if (!dancersCb) return;
+        const stored = (localStorage.getItem('dancersOn') || '0') === '1';
+        dancersCb.checked = stored;
+        try { window.Dancers && window.Dancers.enable(stored); } catch(_) {}
+        const syncBtn = (on) => { try { const btn = document.getElementById('danceBtn'); if (btn) { on ? btn.classList.add('dance-on') : btn.classList.remove('dance-on'); } } catch(_) {} };
+        syncBtn(stored);
+        dancersCb.addEventListener('change', (e) => {
+          const on = !!e.target.checked;
+          try { localStorage.setItem('dancersOn', on ? '1' : '0'); } catch(_) {}
+          try { window.Dancers && window.Dancers.enable(on); } catch(_) {}
+          syncBtn(on);
+          showToast(`Dancing ${on ? 'enabled' : 'disabled'}`);
+        });
+      })();
       if (grooveSel) {
         const storedG = localStorage.getItem('groove') || 'light_swing';
         grooveSel.value = storedG;
@@ -1427,12 +1743,13 @@
     }
 
     .btn {
-      width: 44px; height: 44px;
+      min-width: 44px; height: 44px; padding: 0 12px;
       border-radius: 12px;
       background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
       color: var(--bar-fg);
       border: 1px solid var(--glass-stroke);
-      display: grid; place-items: center; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+      white-space: nowrap;
       box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.18);
       backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(140%);
       -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(140%);
@@ -1440,13 +1757,12 @@
     }
     .btn:hover { transform: translateY(-1px) scale(1.02); box-shadow: 0 10px 28px rgba(0,0,0,0.28), 0 0 0 2px rgba(255,255,255,0.06) inset; }
     .btn:active { transform: translateY(1px) scale(0.99); }
-    .btn i {
-      font-size: 18px; color: #fff;
-      display: inline-grid; place-items: center; padding: 4px; border-radius: 8px;
-      backdrop-filter: invert(1) saturate(120%);
-      -webkit-backdrop-filter: invert(1) saturate(120%);
-      mix-blend-mode: normal;
-    }
+    .btn i { font-size: 16px; color: #fff; display: inline-grid; place-items: center; padding: 2px; border-radius: 6px; backdrop-filter: invert(1) saturate(120%); -webkit-backdrop-filter: invert(1) saturate(120%); mix-blend-mode: normal; }
+    .btn span { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Premium small/secondary variants */
+    .btn.small { width: auto; height: 32px; min-width: 36px; padding: 0 12px; border-radius: 10px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.16); }
+    .btn.secondary { background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04)); border-color: rgba(255,255,255,0.14); }
+    .btn.small.secondary { box-shadow: 0 6px 18px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.14); }
     /* Mic active state: greenish glow + inverted icon */
     .btn.mic-on {
       border-color: var(--accent);
@@ -1461,18 +1777,44 @@
     }
     .btn.mic-on i { filter: invert(1) hue-rotate(120deg) saturate(1.2); }
     .btn:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
-
-    #canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100vw;
-      height: 100vh;
-      background: #000;
-      display: block;
+    /* Dance active state: magenta/cyan glow */
+    .btn.dance-on {
+      border-color: var(--accent-magenta);
+      background:
+        radial-gradient(120% 100% at 50% 0%, rgba(255,100,195,0.16), rgba(255,100,195,0.08)),
+        linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05));
+      box-shadow:
+        0 0 0 2px rgba(255,100,195,0.28),
+        0 0 22px rgba(255,100,195,0.22),
+        0 10px 26px rgba(0,0,0,0.24),
+        inset 0 1px 0 rgba(255,255,255,0.22);
     }
+    .btn.dance-on i { filter: invert(1) hue-rotate(300deg) saturate(1.2); }
+
+    #stage { position: fixed; inset: 0; }
+    #canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; display: block; }
+    /* Dancers overlay layer */
+    #dancersLayer { position: absolute; inset: 56px 0 70px 0; pointer-events: none; z-index: 6; overflow: visible; perspective: 1200px; }
+    body.embed #dancersLayer { inset: 0; }
+    .dancer {
+      position: absolute; will-change: transform, opacity, filter; pointer-events: none; transform-style: preserve-3d; backface-visibility: hidden;
+      mix-blend-mode: screen; /* blend with visualization */
+      --mx: 1; --sx: 0.9; --rot: 0deg; --ry: 0deg; --portalGlow: rgba(100,255,255,0.8);
+      filter: drop-shadow(0 8px 24px rgba(0,0,0,0.35)) saturate(1.05);
+      opacity: 0; transform: translate3d(0,0,0) rotateY(var(--ry)) scaleX(var(--mx)) scale(var(--sx)) rotate(var(--rot));
+      animation: dancer-sway 6s ease-in-out infinite, dancer-color 14s linear infinite, dancer-warp 7s ease-in-out infinite;
+      transition: filter .12s ease;
+    }
+    /* temporarily disable keyframe transforms to let CSS transitions control rotateY */
+    .dancer.no-tx { animation: none; }
+    .dancer.in { opacity: 1; transition: opacity .55s ease, transform .45s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .dancer.out { opacity: 0; transform: translate3d(0,0,0) rotateY(var(--ry)) scale(0.9); transition: opacity .45s ease, transform .5s ease; }
+    .dancer.portal { filter: drop-shadow(0 0 12px var(--portalGlow)) saturate(1.28) brightness(1.12); }
+    @keyframes dancer-sway { 0%{ transform: translateY(0) rotate(-2deg); } 50%{ transform: translateY(-8px) rotate(2deg); } 100%{ transform: translateY(0) rotate(-2deg); } }
+    @keyframes dancer-color { 0%{ filter: drop-shadow(0 8px 24px rgba(0,0,0,0.35)) hue-rotate(0deg) saturate(1.05); } 50%{ filter: drop-shadow(0 8px 24px rgba(0,0,0,0.35)) hue-rotate(120deg) saturate(1.2); } 100%{ filter: drop-shadow(0 8px 24px rgba(0,0,0,0.35)) hue-rotate(360deg) saturate(1.05); } }
+    @keyframes dancer-warp { 0%{ transform: translate3d(0,0,0) rotateY(var(--ry)) scaleX(var(--mx)) scale(var(--sx)) rotate(var(--rot)); } 50%{ transform: translate3d(0,0,0) rotateY(var(--ry)) scaleX(calc(var(--mx) * 1.02)) scale(calc(var(--sx) * 0.98)) rotate(calc(var(--rot) + 0.5deg)); } 100%{ transform: translate3d(0,0,0) rotateY(var(--ry)) scaleX(var(--mx)) scale(var(--sx)) rotate(var(--rot)); } }
+    .portal-spark { position: absolute; width: 6px; height: 6px; border-radius: 999px; background: var(--portalGlow); box-shadow: 0 0 12px var(--portalGlow), 0 0 24px rgba(100,255,255,0.4); pointer-events: none; opacity: 0.95; animation: spark .6s ease-out forwards; }
+    @keyframes spark { 0% { transform: translate(0,0) scale(0.8); opacity: 0.95; } 100% { transform: translate(var(--dx, 0px), var(--dy, 0px)) scale(0.4); opacity: 0; } }
     /* Embed mode hides chrome */
     body.embed #topbar,
     body.embed #bottombar,
@@ -1582,6 +1924,23 @@
       border-radius: 12px; min-height: 36px;
       padding: 8px 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18);
     }
+    /* Premium select (global for modals too) */
+    select {
+      -webkit-appearance: none; appearance: none;
+      background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.08));
+      color: var(--bar-fg);
+      border: 1px solid var(--glass-stroke);
+      border-radius: 12px;
+      min-height: 36px;
+      padding: 8px 34px 8px 12px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18);
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="%23e5ecf5"><path d="M7 10l5 5 5-5z"/></svg>');
+      background-repeat: no-repeat; background-position: right 10px center; background-size: 12px;
+    }
+    select:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+    /* Premium numeric input */
+    input[type="number"] { background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08)); border: 1px solid var(--glass-stroke); border-radius: 10px; min-height: 36px; padding: 6px 10px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 16px rgba(0,0,0,0.16); }
+    input[type="number"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
     #settingsPanel select { cursor: pointer; padding-right: 34px;
       background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="%23e5ecf5"><path d="M7 10l5 5 5-5z"/></svg>');
       background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; }
@@ -1602,20 +1961,26 @@
     .setting-row:hover { box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.20); }
 
     #presetList { list-style: none; padding: 0; margin: 0; }
-    #presetList li { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+    #presetList li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
     #presetList li:hover { background: rgba(255,255,255,0.06); }
     #presetList li.active { background: rgba(255,255,255,0.12); }
+    #presetList li .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #presetList li.disabled .title { opacity: .55; text-decoration: line-through; }
 
     /* Playlist panel premium UI */
     #playlistPanel .panel-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 10px; }
     #playlistPanel .panel-meta .now { font-weight: 700; opacity: .96; }
-    #playlistPanel .panel-meta .now code { font-family: var(--font-mono); font-weight: 600; padding: 2px 6px; border-radius: 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
+    #playlistPanel .panel-meta .now code { font-family: var(--font-mono); font-weight: 600; padding: 2px 6px; border-radius: 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); display: inline-block; max-width: 60vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
     #playlistPanel .panel-meta .count { font-size: 12px; opacity: .8; }
     #playlistPanel .panel-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
     #playlistPanel .panel-controls .group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     #playlistPanel input[type="text"].search { width: 100%; min-height: 36px; border-radius: 10px; padding: 8px 12px; color: var(--bar-fg); background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
     #playlistPanel input[type="text"].search:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
-    #playlistPanel .chip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.14); font-size: 12px; }
+    /* Premium chip toggle (global) */
+    .chip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.14); font-size: 12px; box-shadow: 0 6px 16px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.14); }
+    .chip-toggle:hover { box-shadow: 0 8px 22px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .chip-toggle input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); }
+    #playlistPanel .chip-toggle { font-size: 12px; }
     #playlistPanel .btn.small { width: auto; height: 32px; padding: 0 12px; font-size: 12px; }
     #playlistPanel .btn.secondary { background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04)); border-color: rgba(255,255,255,0.14); }
     @media (max-width: 640px) {
@@ -1667,7 +2032,7 @@
 
     /* Responsive adjustments */
     @media (max-width: 840px) {
-      .btn { width: 40px; height: 40px; }
+      .btn { min-width: 40px; height: 40px; padding: 0 10px; }
       .bar-section { gap: 12px; }
       #playlistPanel { right: 16px; }
     }
@@ -1692,7 +2057,7 @@
     /* Progressive disclosure for advanced rows */
     #settingsPanel .advanced { display: none; }
     #settingsPanel.show-advanced .advanced { display: flex; }
-    .advanced-toggle { margin: 8px 0 12px; display: inline-block; font-size: 12px; opacity: .8; cursor: pointer; }
+    .advanced-toggle { margin: 8px 0 12px; display: inline-block; font-size: 12px; opacity: .92; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -1717,7 +2082,10 @@
     </div>
   </div>
 
-  <canvas id="canvas"></canvas>
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="dancersLayer" aria-hidden="true"></div>
+  </div>
 
   <div id="bottombar">
     <div class="bar-section">
@@ -1732,6 +2100,7 @@
     </div>
     <div class="bar-section">
       <button id="settingsBtn" class="btn" title="Settings"><i class="fa-solid fa-gear"></i></button>
+      <button id="danceBtn" class="btn" title="Dancing vibe"><i class="fa-solid fa-person-dots-from-line"></i><span style="display:none">Dance</span></button>
       <button id="backArrowBtn" class="btn" title="Previous"><i class="fa-solid fa-arrow-left"></i></button>
       <button id="nextArrowBtn" class="btn" title="Next"><i class="fa-solid fa-arrow-right"></i></button>
       <button id="fullscreenBtn" class="btn" title="Fullscreen"><i class="fa-regular fa-square"></i></button>
@@ -1781,6 +2150,9 @@
     <div class="setting-row"><div class="icon"><i class="fa-solid fa-dice"></i></div><div><label for="settingRandom">Random order</label><small>Shuffle presets instead of linear</small></div><input id="settingRandom" type="checkbox" checked /></div>
 
     <div class="divider"></div>
+    <h4 style="margin-top:10px">Vibes</h4>
+    <div class="setting-row"><div class="icon"><i class="fa-solid fa-person-dots-from-line"></i></div><div><label>Dancing GIFs</label><small>Overlay dancing characters, beat-reactive</small></div><input id="settingDancers" type="checkbox" /></div>
+
     <div class="row">
       <label for="settingBackend">Backend</label>
       <select id="settingBackend">
@@ -1790,6 +2162,24 @@
       </select>
     </div>
     <div class="row"><label for="settingDirect">Direct draw</label><input id="settingDirect" type="checkbox" /></div>
+    <div class="row"><label for="settingWgpuMode">WebGPU mode</label>
+      <select id="settingWgpuMode">
+        <option value="off">Off</option>
+        <option value="post" selected>Post</option>
+        <option value="pure">Pure</option>
+      </select>
+    </div>
+    <div class="row"><label for="settingWgpuEffect">WebGPU effect</label>
+      <select id="settingWgpuEffect">
+        <option value="pulsebloom" selected>PulseBloom</option>
+        <option value="neonglitch">NeonGlitch</option>
+        <option value="spectraltrails">SpectralTrails</option>
+        <option value="vectorscope2d">VectorScope2D (pure)</option>
+      </select>
+    </div>
+    <div class="row advanced"><label for="settingWgpuP1">Effect Param1</label>
+      <input id="settingWgpuP1" type="number" min="0" max="1" step="0.05" value="0.5" />
+    </div>
     <div class="row"><label for="settingAudioMode">Audio mode</label>
       <select id="settingAudioMode">
         <option value="internal">Internal</option>
@@ -1814,6 +2204,7 @@
     <div class="row"><label>Model Only</label><input id="settingModelOnly" type="checkbox" /></div>
 
     <div class="row"><label>Reduce motion</label><input id="settingReduceMotion" type="checkbox" /></div>
+    <div class="row"><label>Show only new presets</label><input id="settingNewPresetsOnly" type="checkbox" /></div>
   </div>
 
   <div id="playlistPanel">
