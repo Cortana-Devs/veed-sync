@@ -21,12 +21,15 @@ import BlendPattern from "./blendPattern";
 import Utils from "../utils";
 import Particles from "./sprites/particles";
 import ParticleModel from "./sprites/particleModel";
+import Scenes, { listScenes as listSceneDefs } from "./scenes";
 
 export default class Renderer {
   constructor(gl, audio, opts) {
     this.gl = gl;
     this.audio = audio;
-    this.beatSync = null;
+    this.beatSync = null;      // legacy
+    this.momentSync = null;    // legacy
+    this.syncEngine = null;    // unified
 
     this.frameNum = 0;
     this.fps = 30;
@@ -193,48 +196,73 @@ export default class Renderer {
       zoomBounceFreq: 1.5,    // Hz
     };
 
+    // Global dark theme palette (enabled by default). Ensures mostly dark visuals
+    this.darkTheme = {
+      enabled: true,
+      minExposure: -0.35,
+      maxExposure: 0.18,
+      minSaturation: -0.1,
+      maxSaturation: 0.28,
+      tonemapMin: 0.6,
+      vignetteMin: 0.2,
+      baseTint: [0.92, 0.96, 1.08], // deep space blue/cyan bias
+      tintLerp: 0.22,
+    };
+
+    // Stability controls to reduce shakiness
+    this.stab = {
+      confThreshold: 0.55,            // minimum confidence for strong triggers
+      energyEMAAlpha: 0.06,           // slower energy smoothing
+      eventGateDivision: 8,           // gate reactive bumps on 8ths by default
+      postFXLerp: 0.08,               // slower postFX smoothing
+      postFXImpactScale: 0.7,         // scale down per-beat impact
+      cameraCooldown: 1.6,            // longer cooldown between shots
+      nudgeDecay: { z: 0.94, side: 0.93, fov: 0.94, particles: 0.90, grain: 0.88 },
+      sideWobble: 0.06,               // base side wobble amplitude
+    };
+
     // Vibe presets
     this._vibes = [
       {
         key: "sunset_beach",
         label: "Sunset Beach",
         postFX: {
-          exposure: 0.25,
-          tonemap: 1.0,
-          saturation: 0.18,
-          contrast: 0.08,
-          vignette: 0.22,
-          grain: 0.25,
+          exposure: -0.08,
+          tonemap: 0.85,
+          saturation: 0.1,
+          contrast: 0.06,
+          vignette: 0.28,
+          grain: 0.18,
           grainLuma: 0.85,
-          tint: [1.06, 0.95, 0.88],
+          tint: [1.02, 0.95, 0.94],
         },
       },
       {
         key: "neon_city",
         label: "Neon City",
         postFX: {
-          exposure: 0.15,
-          tonemap: 0.8,
-          saturation: 0.35,
-          contrast: 0.18,
-          vignette: 0.28,
-          grain: 0.18,
+          exposure: 0.06,
+          tonemap: 0.85,
+          saturation: 0.22,
+          contrast: 0.14,
+          vignette: 0.32,
+          grain: 0.16,
           grainLuma: 0.6,
-          tint: [0.9, 1.05, 1.1],
+          tint: [0.9, 1.02, 1.12],
         },
       },
       {
         key: "nature_doc",
         label: "Nature Documentary",
         postFX: {
-          exposure: 0.0,
-          tonemap: 1.0,
-          saturation: -0.05,
+          exposure: -0.12,
+          tonemap: 0.9,
+          saturation: -0.06,
           contrast: -0.02,
-          vignette: 0.08,
+          vignette: 0.18,
           grain: 0.12,
           grainLuma: 1.0,
-          tint: [1.0, 1.0, 1.0],
+          tint: [0.98, 1.0, 1.02],
         },
       },
     ];
@@ -986,11 +1014,11 @@ export default class Renderer {
     }
     this.audioLevels.updateAudioLevels(this.fps, this.frameNum);
 
-    // Update beat sync using mixed spectrum (mono)
+    // Update sync using mixed spectrum (mono)
     if (this.audio && this.audio.freqArray) {
       const dt = elapsedTime || 1 / Math.max(24, Math.round(this.fps) || 30);
       const spec = this.audio.freqArrayL || this.audio.freqArray || null;
-      if (this.beatSync && spec) {
+      if (this.syncEngine && spec) {
         // Provide band ranges to BeatSync once
         if (!this._beatBandsSet) {
           const sampleRate = this.audio.audioContext ? this.audio.audioContext.sampleRate : 44100;
@@ -999,14 +1027,18 @@ export default class Renderer {
           const bassHigh = Math.max(0, Math.round(320 / bucketHz) - 1);
           const midHigh = Math.max(0, Math.round(2800 / bucketHz) - 1);
           const trebHigh = Math.max(0, Math.round(11025 / bucketHz) - 1);
-          this.beatSync.setBands([
+          this.syncEngine.setBands([
             { start: bassLow, stop: bassHigh },
             { start: bassHigh, stop: midHigh },
             { start: midHigh, stop: trebHigh },
           ]);
           this._beatBandsSet = true;
         }
-        this.beatState = this.beatSync.update(dt, spec);
+        const sr = this.audio.audioContext ? this.audio.audioContext.sampleRate : 44100;
+        const engineState = this.syncEngine.update(dt, spec, sr, this.audio.fftSize);
+        if (engineState) {
+          this.beatState = engineState; // maintain existing naming, but contains unified fields
+        }
       }
     }
 
@@ -1078,6 +1110,18 @@ export default class Renderer {
       globalVars.on_mid = 0;
       globalVars.on_treb = 0;
     }
+
+    // Provide unified moment globals
+    const bs = this.beatState;
+    globalVars.moment_bar_phase = bs ? (bs.momentBarPhase || 0) : 0;
+    globalVars.moment_phrase_phase = bs ? (bs.phrasePhase || 0) : 0;
+    globalVars.moment_cinematic_phase = bs ? (bs.cinematicPhase || 0) : 0;
+    globalVars.moment_4_phase = bs ? (bs.div4Phase || 0) : 0;
+    globalVars.moment_8_phase = bs ? (bs.div8Phase || 0) : 0;
+    globalVars.moment_16_phase = bs ? (bs.div16Phase || 0) : 0;
+    globalVars.on_moment_4 = bs && bs.on_div4 ? 1 : 0;
+    globalVars.on_moment_8 = bs && bs.on_div8 ? 1 : 0;
+    globalVars.on_moment_16 = bs && bs.on_div16 ? 1 : 0;
 
     // Compute low-level features and publish
     const feats = this.audioFeatures.update();
@@ -1265,12 +1309,13 @@ export default class Renderer {
       this.particleModel.spinSpeed = spinSpeed;
       // Cinematic camera dolly (subtle)
       // Beat/shot detection with tighter smoothing and thresholding
-      this.energyEMA = 0.88 * this.energyEMA + 0.12 * energy;
+      const eAlpha = Math.max(0, Math.min(1, this.stab.energyEMAAlpha));
+      this.energyEMA = (1 - eAlpha) * this.energyEMA + eAlpha * energy;
       const energyDelta = energy - this.energyEMA;
       const now = this.time;
-      const canTrigger = (now - this.lastShotTime) > 1.2; // cooldown
+      const canTrigger = (now - this.lastShotTime) > (this.stab.cameraCooldown || 1.6);
       const conf = (this.beatState?.confidence || 0);
-      const beatHit = this.beatState?.onBeat && conf > 0.35;
+      const beatHit = this.beatState?.onBeat && conf > this.stab.confThreshold;
       if ((energyDelta > 0.22 || beatHit) && canTrigger) {
         this._startCameraShot(energy);
         this.lastShotTime = now;
@@ -1282,10 +1327,16 @@ export default class Renderer {
       const faceY = framing.faceY || 0.5;
       // Decay event router states
       const conf2 = Math.max(0, Math.min(1, this.beatState?.confidence || 0));
-      this._camNudgeZ *= 0.92; this._camNudgeSide *= 0.90; this._fovNarrow *= 0.92; this._particlesBurst *= 0.88; this._grainSpark *= 0.85;
-      if (this.beatState?.onBass) { this._camNudgeZ += 0.9 * conf2; this._fovNarrow += 0.6 * conf2; this._camNudgeSide += 0.25 * conf2; }
-      if (this.beatState?.onMid) { this._particlesBurst += 0.9 * conf2; }
-      if (this.beatState?.onTreb) { this._grainSpark += 0.7 * conf2; }
+      const dec = this.stab.nudgeDecay;
+      this._camNudgeZ *= dec.z; this._camNudgeSide *= dec.side; this._fovNarrow *= dec.fov; this._particlesBurst *= dec.particles; this._grainSpark *= dec.grain;
+      // Gate reactivity on moment divisions to reduce jitter
+      const gateDiv = this.stab.eventGateDivision;
+      const onGate = gateDiv === 16 ? (this.momentState?.divisions?.[16]?.on) : (gateDiv === 4 ? (this.momentState?.divisions?.[4]?.on) : (this.momentState?.divisions?.[8]?.on));
+      if (onGate && conf2 > this.stab.confThreshold) {
+        if (this.beatState?.onBass) { this._camNudgeZ += 0.7 * conf2; this._fovNarrow += 0.45 * conf2; this._camNudgeSide += 0.18 * conf2; }
+        if (this.beatState?.onMid) { this._particlesBurst += 0.7 * conf2; }
+        if (this.beatState?.onTreb) { this._grainSpark += 0.55 * conf2; }
+      }
 
       const baseEyeZ = 2.4 - 0.35 * energy - 0.20 * this._camNudgeZ; // closer for portrait, bass punch-in
       const baseEyeY = faceY + 0.06 + 0.08 * Math.sin(this.time * 0.45);
@@ -1312,8 +1363,8 @@ export default class Renderer {
       }
 
       // Slight side dolly for shot variety
-      const beatWobble = this.beatState ? (0.08 * Math.sin(this.beatState.phase * Math.PI * 2)) : 0.0;
-      const side = 0.10 * Math.sin(this.time * 0.35) + beatWobble + 0.05 * this._camNudgeSide;
+      const beatWobble = this.beatState ? (0.05 * Math.sin(this.beatState.phase * Math.PI * 2)) : 0.0;
+      const side = this.stab.sideWobble * Math.sin(this.time * 0.35) + beatWobble + 0.05 * this._camNudgeSide;
       this.particleModel.setCamera({ eye: [side, eye[1], eye[2]], target: [0, faceY, 0], fov, aspect });
       this.particles.configure({ pointSize: Math.max(2.0, 5.0 * (energy + 0.25 * this._particlesBurst)), speed: 1.0 + energy + 0.6 * this._particlesBurst });
 
@@ -1346,11 +1397,12 @@ export default class Renderer {
     if (this.beatState) {
       const conf = Math.max(0, Math.min(1, this.beatState.confidence || 0));
       const onset = Math.max(0, Math.min(1, this.beatState.onsetStrength || 0));
-      const onBeatPulse = (this.beatState.onBeat ? 0.12 : 0.0) * conf + 0.06 * onset;
-      const beatSwell = 0.05 * Math.sin(this.beatState.phase * Math.PI * 2);
-      const bassPunch = ((this.beatState.onBass ? 0.05 : 0.0) + 0.04 * onset) * conf;
-      const trebCrackle = (this.beatState.onTreb ? 0.025 : 0.0) * conf;
-      const downbeatBounce = (this.beatState.onDownbeat ? 0.42 : 0.0) * conf;
+      const scale = this.stab.postFXImpactScale || 0.7;
+      const onBeatPulse = ((this.beatState.onBeat ? 0.10 : 0.0) * conf + 0.05 * onset) * scale;
+      const beatSwell = (0.04 * Math.sin(this.beatState.phase * Math.PI * 2)) * scale;
+      const bassPunch = (((this.beatState.onBass ? 0.04 : 0.0) + 0.03 * onset) * conf) * scale;
+      const trebCrackle = ((this.beatState.onTreb ? 0.018 : 0.0) * conf) * scale;
+      const downbeatBounce = ((this.beatState.onDownbeat ? 0.32 : 0.0) * conf) * scale;
 
       const targetFX = {
         exposure: this.postFX.exposure + onBeatPulse + beatSwell,
@@ -1361,7 +1413,7 @@ export default class Renderer {
       };
       // smooth towards target to avoid stepping
       const lerp = (a, b, t) => a * (1 - t) + b * t;
-      const t = 0.12;
+      const t = Math.max(0, Math.min(1, this.stab.postFXLerp));
       this.postFX.exposure = lerp(this.postFX.exposure, targetFX.exposure, t);
       this.postFX.contrast = lerp(this.postFX.contrast, targetFX.contrast, t);
       this.postFX.grain = lerp(this.postFX.grain, targetFX.grain, t);
@@ -1515,7 +1567,7 @@ export default class Renderer {
         this.mdVSFrame,
         this.presetEquationRunner.mdVSQAfterFrame,
         this.warpColor,
-        this.postFX
+        this._applyDarkTheme(this.postFX)
       );
     } else {
       this.prevCompShader.renderQuadTexture(
@@ -1529,7 +1581,7 @@ export default class Renderer {
         this.prevMDVSFrame,
         this.prevPresetEquationRunner.mdVSQAfterFrame,
         this.warpColor,
-        this.postFX
+        this._applyDarkTheme(this.postFX)
       );
 
       this.compShader.renderQuadTexture(
@@ -1543,7 +1595,7 @@ export default class Renderer {
         this.mdVSFrameMixed,
         this.presetEquationRunner.mdVSQAfterFrame,
         this.warpColor,
-        this.postFX
+        this._applyDarkTheme(this.postFX)
       );
     }
 
@@ -1564,6 +1616,25 @@ export default class Renderer {
       this.bindFrambufferAndSetViewport(null, this.width, this.height);
       this.outputShader.renderQuadTexture(this.compTexture);
     }
+  }
+
+  // Clamp/guide postFX toward dark theme if enabled
+  _applyDarkTheme(src) {
+    if (!this.darkTheme || !this.darkTheme.enabled) return src;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const dst = Object.assign({}, src);
+    dst.exposure = clamp(dst.exposure, this.darkTheme.minExposure, this.darkTheme.maxExposure);
+    dst.saturation = clamp(dst.saturation, this.darkTheme.minSaturation, this.darkTheme.maxSaturation);
+    dst.tonemap = Math.max(this.darkTheme.tonemapMin, dst.tonemap || 0);
+    dst.vignette = Math.max(this.darkTheme.vignetteMin, dst.vignette || 0);
+    // Lerp tint a bit toward base dark palette
+    const t = this.darkTheme.tintLerp;
+    dst.tint = [
+      (1 - t) * dst.tint[0] + t * this.darkTheme.baseTint[0],
+      (1 - t) * dst.tint[1] + t * this.darkTheme.baseTint[1],
+      (1 - t) * dst.tint[2] + t * this.darkTheme.baseTint[2],
+    ];
+    return dst;
   }
 
   // Public controls for model effects
@@ -1675,6 +1746,37 @@ export default class Renderer {
     this.setPostFX({ tonemap: 0.9, exposure: 0.05, saturation: -0.05, tint: [0.92, 1.05, 1.08] });
   }
 
+  // Realistic scenes support
+  listScenes() { return listSceneDefs(); }
+  async applyScene(keyOrIndex) {
+    try {
+      let scene = null;
+      if (typeof keyOrIndex === 'string') {
+        scene = Scenes.find((s) => s.key === keyOrIndex);
+      } else if (typeof keyOrIndex === 'number') {
+        const idx = Math.max(0, Math.min(Scenes.length - 1, keyOrIndex));
+        scene = Scenes[idx];
+      }
+      if (!scene) return null;
+      // vibe
+      if (scene.vibeKey) this.applyVibe(scene.vibeKey);
+      // post fx override
+      if (scene.postFX) this.setPostFX(scene.postFX);
+      // model params
+      if (scene.modelParams) this.setModelBaseParams(scene.modelParams);
+      // particles
+      if (scene.particles) {
+        this.setModelEffectsEnabled(!!scene.particles.enabled);
+        if (scene.particles.enabled && this.configureParticles) this.configureParticles({ maxCount: scene.particles.maxCount || 800 });
+      }
+      // load model
+      await this.loadModelWithTransition(scene.modelPath, { blendTime: 1.2, configure: scene.modelParams });
+      // cinematic sync profile
+      this.applySyncProfile('cinematic');
+      return scene;
+    } catch (_) { return null; }
+  }
+
   applySceneBeach() {
     this.setModelEffectsEnabled(false);
     this.applyVibe('sunset_beach');
@@ -1689,6 +1791,60 @@ export default class Renderer {
   // Inject beat synchronizer
   setBeatSync(instance) {
     this.beatSync = instance || null;
+  }
+
+  // Inject moment synchronizer
+  setMomentSync(instance) {
+    this.momentSync = instance || null;
+  }
+
+  // Unified sync engine
+  setSyncEngine(instance) {
+    this.syncEngine = instance || null;
+  }
+
+  // Update moment synchronizer config
+  setMomentConfig(cfg = {}) {
+    if (this.momentSync && this.momentSync.setConfig) {
+      this.momentSync.setConfig(cfg);
+    }
+  }
+
+  // Enable cinematic, smooth, downbeat-quantized vibe with subtle blue-magenta tint
+  enableCinematicMoments(options = {}) {
+    const bars = options.barsPerTransition != null ? options.barsPerTransition : 2;
+    const phraseBars = options.phraseBars != null ? options.phraseBars : 8;
+    const swing = options.swing != null ? options.swing : 0.14;
+    const latencySeconds = options.latencySeconds != null ? options.latencySeconds : -0.03;
+    const smoothing = options.cinematicSmoothingPerSecond != null ? options.cinematicSmoothingPerSecond : 0.25;
+
+    this.setQuantizedTransitions(true, bars);
+    this.setMomentConfig({ phraseBars, swing, latencySeconds, cinematicSmoothingPerSecond: smoothing });
+    // Gentle cool tint and mild contrast for calm tech vibe
+    this.setPostFX({ tint: [0.94, 1.03, 1.08], contrast: 0.06, saturation: 0.06, vignette: Math.max(0.12, this.postFX.vignette || 0) });
+  }
+
+  // Preset sync profiles (expert tuned)
+  applySyncProfile(name = "cinematic") {
+    const n = String(name || '').toLowerCase();
+    if (n === 'cinematic') {
+      this.enableCinematicMoments({ barsPerTransition: 2, phraseBars: 8, swing: 0.12 });
+      this.setStabilityConfig({ confThreshold: 0.6, eventGateDivision: 8, postFXImpactScale: 0.65, postFXLerp: 0.08, cameraCooldown: 1.8 });
+      if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.6, gateDivision: 8 });
+    } else if (n === 'responsive') {
+      // quicker, punchier
+      this.setQuantizedTransitions(true, 1);
+      this.setMomentConfig({ swing: 0.08, phraseBars: 4, latencySeconds: -0.02, cinematicSmoothingPerSecond: 0.35 });
+      this.setStabilityConfig({ confThreshold: 0.5, eventGateDivision: 4, postFXImpactScale: 0.85, postFXLerp: 0.12, cameraCooldown: 1.2 });
+      if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.5, gateDivision: 4 });
+    } else if (n === 'chill') {
+      // very smooth, minimal movement
+      this.setQuantizedTransitions(true, 4);
+      this.setMomentConfig({ swing: 0.0, phraseBars: 16, latencySeconds: -0.03, cinematicSmoothingPerSecond: 0.18 });
+      this.setStabilityConfig({ confThreshold: 0.7, eventGateDivision: 4, postFXImpactScale: 0.45, postFXLerp: 0.06, cameraCooldown: 2.2, sideWobble: 0.035 });
+      if (this.syncEngine && this.syncEngine.setConfig) this.syncEngine.setConfig({ confThreshold: 0.7, gateDivision: 4 });
+    }
+    return n;
   }
 
   // Quantize preset transitions to downbeats (every N bars)
@@ -1708,6 +1864,11 @@ export default class Renderer {
     if (this.audioLevels && this.audioLevels.setResponse) {
       this.audioLevels.setResponse(cfg);
     }
+  }
+
+  // ---- Stability controls (public) ----
+  setStabilityConfig(cfg = {}) {
+    this.stab = Object.assign({}, this.stab, cfg);
   }
 
   setMicActive(active, micBoost = 1.6) {

@@ -2,7 +2,7 @@ import { loadModule } from "eel-wasm";
 import ascLoader from "@assemblyscript/loader";
 import AudioProcessor from "./audio/audioProcessor";
 import NoiseSuppressor from "./audio/noiseSuppression";
-import BeatSync from "./audio/beatSync";
+import SyncEngine from "./audio/syncEngine";
 import Renderer from "./rendering/renderer";
 import WebGPUCompositor from "./rendering/webgpuCompositor";
 import Utils from "./utils";
@@ -21,7 +21,17 @@ export default class Visualizer {
     this.rng = initializeRNG(opts);
     this.deterministicMode = opts.deterministic || opts.testMode;
     this.audio = new AudioProcessor(audioContext);
-    this.beatSync = new BeatSync({ expectedBpm: (opts && opts.bpm) || 120, meter: (opts && opts.meter) || 4 });
+    this.syncEngine = new SyncEngine({
+      expectedBpm: (opts && opts.bpm) || 120,
+      meter: (opts && opts.meter) || 4,
+      divisionsPerBar: (opts && opts.momentDivisions) || [4, 8, 16],
+      swing: (opts && opts.swing) != null ? opts.swing : 0.14,
+      phraseBars: (opts && opts.phraseBars) || 8,
+      latencySeconds: (opts && opts.latencySeconds) != null ? opts.latencySeconds : -0.03,
+      cinematicSmoothingPerSecond: (opts && opts.cinematicSmoothingPerSecond) != null ? opts.cinematicSmoothingPerSecond : 0.25,
+      confThreshold: (opts && opts.confThreshold) != null ? opts.confThreshold : 0.55,
+      gateDivision: (opts && opts.gateDivision) || 8,
+    });
     this.captureStreams = [];
     this.noiseSuppressor = null;
 
@@ -307,7 +317,7 @@ export default class Visualizer {
     ];
 
     this.renderer = new Renderer(this.gl, this.audio, opts);
-    if (this.renderer && this.renderer.setBeatSync) this.renderer.setBeatSync(this.beatSync);
+    if (this.renderer && this.renderer.setSyncEngine) this.renderer.setSyncEngine(this.syncEngine);
     if (this.renderer && this.renderer.enableSyncedDefaults) this.renderer.enableSyncedDefaults();
   }
 

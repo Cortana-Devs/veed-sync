@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barrio&family=Inter:wght@300..900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400..700&display=swap" rel="stylesheet">
 
   <script type="text/javascript" src="https://unpkg.com/lodash"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
@@ -41,6 +42,9 @@
     let presetCycle = true;
     let presetCycleLength = 15000;
     let presetRandom = true;
+    let disabledSet = new Set();
+    let hideDisabled = (localStorage.getItem('hideDisabled') || '0') === '1';
+    let presetSearchTerm = '';
 
     let canvas; // assigned on DOMContentLoaded
     let hero;
@@ -318,16 +322,22 @@
     function nextPreset(blendTime = 5.7) {
       if (!visualizer) { showToast('Initializing…'); return; }
       presetIndexHist.push(presetIndex);
-      const numPresets = presetKeys.length;
+      const pool = getEnabledKeys();
+      if (!pool.length) { showToast('No presets enabled', true); return; }
       if (presetRandom) {
-        presetIndex = Math.floor(Math.random() * numPresets);
+        presetIndex = presetKeys.indexOf(pool[Math.floor(Math.random() * pool.length)]);
       } else {
-        presetIndex = (presetIndex + 1) % numPresets;
+        let i = presetIndex;
+        for (let step = 0; step < presetKeys.length; step++) {
+          i = (i + 1) % presetKeys.length;
+          if (!isDisabled(presetKeys[i])) { presetIndex = i; break; }
+        }
       }
       const key = presetKeys[presetIndex];
       visualizer.loadPreset(presets[key], blendTime);
       try { visualizer.renderer?.applyStyleFromName?.(key); } catch(_) {}
       highlightActivePreset();
+      showPresetToast(key);
     }
 
     function prevPreset(blendTime = 5.7) {
@@ -336,12 +346,17 @@
       if (presetIndexHist.length > 0) {
         presetIndex = presetIndexHist.pop();
       } else {
-        presetIndex = ((presetIndex - 1) + numPresets) % numPresets;
+        let i = presetIndex;
+        for (let step = 0; step < numPresets; step++) {
+          i = ((i - 1) + numPresets) % numPresets;
+          if (!isDisabled(presetKeys[i])) { presetIndex = i; break; }
+        }
       }
       const key = presetKeys[presetIndex];
       visualizer.loadPreset(presets[key], blendTime);
       try { visualizer.renderer?.applyStyleFromName?.(key); } catch(_) {}
       highlightActivePreset();
+      showPresetToast(key);
     }
 
     function restartCycleInterval() {
@@ -498,6 +513,30 @@
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), 2200);
     }
+    function showPresetToast(name) {
+      toast.classList.remove('error');
+      toast.innerHTML = '';
+      const span = document.createElement('span');
+      span.textContent = `Now showing: ${name}`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Disable';
+      btn.style.marginLeft = '10px';
+      btn.className = 'btn small';
+      btn.addEventListener('click', () => { disableCurrentPreset(); });
+      toast.appendChild(span);
+      toast.appendChild(btn);
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+    function saveDisabled() { try { localStorage.setItem('disabledPresets', JSON.stringify(Array.from(disabledSet))); } catch(_) {} }
+    function loadDisabled() {
+      try { const arr = JSON.parse(localStorage.getItem('disabledPresets') || '[]'); if (Array.isArray(arr)) disabledSet = new Set(arr); } catch(_) { disabledSet = new Set(); }
+    }
+    function isDisabled(key) { return disabledSet.has(key); }
+    function getEnabledKeys() { return presetKeys.filter((k) => !isDisabled(k)); }
+    function disablePresetByKey(key) { disabledSet.add(key); saveDisabled(); buildPlaylist(); }
+    function enablePresetByKey(key) { disabledSet.delete(key); saveDisabled(); buildPlaylist(); }
+    function disableCurrentPreset() { const key = presetKeys[presetIndex]; if (!key) return; disablePresetByKey(key); showToast('Preset disabled'); nextPreset(0.5); }
 
     function announce(message) {
       live.textContent = '';
@@ -576,20 +615,45 @@
     function buildPlaylist() {
       const list = document.getElementById('presetList');
       list.innerHTML = '';
-      presetKeys.forEach((key, i) => {
+      const raw = hideDisabled ? presetKeys.filter((k) => !isDisabled(k)) : presetKeys;
+      const q = (document.getElementById('presetSearch')?.value || presetSearchTerm || '').toLowerCase().trim();
+      const keysForList = q ? raw.filter((k) => k.toLowerCase().includes(q)) : raw;
+
+      // Update meta
+      const metaNow = document.getElementById('presetNow');
+      const metaCount = document.getElementById('presetCount');
+      if (metaNow) metaNow.textContent = presetKeys[presetIndex] ? presetKeys[presetIndex].substring(0, 80) : '—';
+      if (metaCount) metaCount.textContent = `${keysForList.length} of ${raw.length}`;
+      keysForList.forEach((key) => {
+        const i = presetKeys.indexOf(key);
         const li = document.createElement('li');
         li.textContent = key.substring(0, 80);
         li.dataset.index = i;
+        if (isDisabled(key)) li.classList.add('disabled');
+        const action = document.createElement('button');
+        action.className = 'btn small';
+        action.style.marginLeft = '10px';
+        action.title = isDisabled(key) ? 'Enable preset' : 'Disable preset';
+        action.innerHTML = isDisabled(key) ? '<i class="fa-solid fa-rotate"></i>' : '<i class="fa-solid fa-ban"></i>';
+        action.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (isDisabled(key)) enablePresetByKey(key); else disablePresetByKey(key);
+          showToast(isDisabled(key) ? 'Preset disabled' : 'Preset enabled');
+        });
         li.addEventListener('click', () => {
           presetIndex = i;
           visualizer.loadPreset(presets[key], 0.5);
           highlightActivePreset();
           playlistPanel.classList.remove('open');
+          showPresetToast(key);
         });
+        li.appendChild(action);
         list.appendChild(li);
       });
       highlightActivePreset();
     }
+
+    // Sidebar removed
 
     function highlightActivePreset() {
       const list = document.getElementById('presetList');
@@ -597,6 +661,8 @@
       items.forEach((li) => li.classList.remove('active'));
       const active = list.querySelector(`li[data-index="${presetIndex}"]`);
       if (active) active.classList.add('active');
+      const metaNow = document.getElementById('presetNow');
+      if (metaNow) metaNow.textContent = presetKeys[presetIndex] ? presetKeys[presetIndex].substring(0, 80) : '—';
     }
 
     async function initPlayer() {
@@ -621,6 +687,7 @@
         const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = 'WebGL2';
       })();
       presets = {};
+      loadDisabled();
       if (window.base && window.base.default) Object.assign(presets, window.base.default);
       if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
       // Optionally add a few classic local presets shipped in repo
@@ -697,6 +764,7 @@
       }
       try {
         visualizer.loadPreset(presets[presetKeys[presetIndex]], 0);
+        showPresetToast(presetKeys[presetIndex]);
       } catch (e) {
         console.error('Failed to load preset', e);
         showToast('Failed to load preset', true);
@@ -767,6 +835,7 @@
       level = document.getElementById('level');
       gpuBadge = document.getElementById('gpuBadge');
       if (gpuBadge) gpuBadge.textContent = 'Detecting…';
+      // Sidebar removed
 
       // Wire UI first; initialize player after to avoid blocking buttons if init errors
       // Init luminance probe for adaptive glass opacity
@@ -813,6 +882,36 @@
         playlistPanel.classList.toggle('open');
         announce(playlistPanel.classList.contains('open') ? 'Opened preset list' : 'Closed preset list');
       });
+      // Playlist controls: hide disabled, reset
+      const playlistPanelEl = document.getElementById('playlistPanel');
+      if (playlistPanelEl) {
+        // Header meta row
+        const meta = document.createElement('div');
+        meta.className = 'panel-meta';
+        meta.innerHTML = '<div class="now">Now showing: <code id="presetNow">—</code></div><div class="count">(<span id="presetCount">0</span>)</div>';
+        playlistPanelEl.insertBefore(meta, playlistPanelEl.querySelector('ul'));
+
+        // Controls
+        const controls = document.createElement('div');
+        controls.className = 'panel-controls';
+        // Search input
+        const search = document.createElement('input');
+        search.type = 'text'; search.id = 'presetSearch'; search.placeholder = 'Search presets…'; search.className = 'search';
+        search.addEventListener('input', (e) => { presetSearchTerm = String(e.target.value || ''); buildPlaylist(); });
+        controls.appendChild(search);
+
+        const group = document.createElement('div'); group.className = 'group';
+        const chipToggle = document.createElement('label'); chipToggle.className = 'chip-toggle'; chipToggle.title = 'Hide disabled presets';
+        const hideCb = document.createElement('input'); hideCb.type = 'checkbox'; hideCb.checked = hideDisabled; hideCb.style.marginRight = '4px';
+        chipToggle.appendChild(hideCb); chipToggle.appendChild(document.createTextNode('Hide disabled'));
+        const resetBtn = document.createElement('button'); resetBtn.className = 'btn small secondary'; resetBtn.textContent = 'Reset disabled'; resetBtn.title = 'Enable all presets';
+        resetBtn.addEventListener('click', () => { disabledSet = new Set(); saveDisabled(); buildPlaylist(); showToast('Disabled list cleared'); });
+        hideCb.addEventListener('change', (e) => { hideDisabled = !!e.target.checked; localStorage.setItem('hideDisabled', hideDisabled ? '1' : '0'); buildPlaylist(); });
+        group.appendChild(chipToggle); group.appendChild(resetBtn);
+        controls.appendChild(group);
+
+        playlistPanelEl.insertBefore(controls, playlistPanelEl.querySelector('ul'));
+      }
 
       document.getElementById('settingsBtn').addEventListener('click', () => {
         settingsPanel.classList.toggle('open');
@@ -1093,9 +1192,17 @@
         if (e.code === 'Space') { if (rendering) stopRenderer(); else startRenderer(); e.preventDefault(); }
         if (e.code === 'ArrowRight') nextPreset();
         if (e.code === 'ArrowLeft') prevPreset();
+        if (e.key.toLowerCase() === 'x') disableCurrentPreset();
         if (e.key.toLowerCase() === 'f') document.getElementById('fullscreenBtn').click();
         if (e.key.toLowerCase() === 'p') document.getElementById('playlistBtn').click();
         if (e.key.toLowerCase() === 's') document.getElementById('settingsBtn').click();
+        if (e.key === 'Escape') {
+          try { document.getElementById('settingsPanel').classList.remove('open'); } catch(_) {}
+          try { document.getElementById('playlistPanel').classList.remove('open'); } catch(_) {}
+          try { closeModal('packsModal'); } catch(_) {}
+          try { closeModal('aboutModal'); } catch(_) {}
+          try { closeModal('modelsModal'); } catch(_) {}
+        }
       });
 
       // Drag & drop upload
@@ -1174,8 +1281,11 @@
       --bar-fg: #e5ecf5;
       --bar-fg-dim: #b7c2d4;
       --accent: #c0ff33; /* cyber green accent */
+      --accent-cyan: #5dd6ff;
+      --accent-magenta: #ff64c3;
       --font-display: "Barrio", system-ui;
       --font-body: "Inter", -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       --glass-blur: 22px;
       --glass-bg1: rgba(255,255,255,0.16);
       --glass-bg2: rgba(255,255,255,0.08);
@@ -1273,7 +1383,7 @@
       mix-blend-mode: normal;
     }
     .top-actions i:hover { opacity: 1; transform: translateY(-1px); }
-    .gpu-badge { margin-left: 12px; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 12px; letter-spacing: .3px; }
+    .gpu-badge { margin-left: 12px; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 12px; letter-spacing: .3px; font-family: var(--font-mono); }
     .gpu-badge.ok { background: rgba(80,200,120,0.22); }
 
     .bar-section {
@@ -1449,7 +1559,7 @@
     #settingsPanel input[type="number"] { -moz-appearance: textfield; width: 90px; }
 
     /* Range slider */
-    #settingsPanel input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
+    #settingsPanel input[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; height: 6px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
     #settingsPanel input[type="range"]:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
     #settingsPanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid rgba(255,255,255,0.6); box-shadow: 0 2px 6px rgba(0,0,0,0.25); cursor: pointer; margin-top: -7px; }
     #settingsPanel input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid rgba(255,255,255,0.6); box-shadow: 0 2px 6px rgba(0,0,0,0.25); cursor: pointer; }
@@ -1461,6 +1571,24 @@
     #presetList li { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
     #presetList li:hover { background: rgba(255,255,255,0.06); }
     #presetList li.active { background: rgba(255,255,255,0.12); }
+
+    /* Playlist panel premium UI */
+    #playlistPanel .panel-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 10px; }
+    #playlistPanel .panel-meta .now { font-weight: 700; opacity: .96; }
+    #playlistPanel .panel-meta .now code { font-family: var(--font-mono); font-weight: 600; padding: 2px 6px; border-radius: 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
+    #playlistPanel .panel-meta .count { font-size: 12px; opacity: .8; }
+    #playlistPanel .panel-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
+    #playlistPanel .panel-controls .group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    #playlistPanel input[type="text"].search { width: 100%; min-height: 36px; border-radius: 10px; padding: 8px 12px; color: var(--bar-fg); background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.18); }
+    #playlistPanel input[type="text"].search:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
+    #playlistPanel .chip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.14); font-size: 12px; }
+    #playlistPanel .btn.small { width: auto; height: 32px; padding: 0 12px; font-size: 12px; }
+    #playlistPanel .btn.secondary { background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04)); border-color: rgba(255,255,255,0.14); }
+    @media (max-width: 640px) {
+      #playlistPanel .panel-meta { flex-direction: column; align-items: flex-start; gap: 4px; }
+      #playlistPanel .panel-controls { gap: 8px; }
+      #playlistPanel .panel-controls .group { width: 100%; justify-content: space-between; }
+    }
 
     /* Busy overlay */
     #busy {
@@ -1523,6 +1651,9 @@
       .gpu-badge { display: none; }
     }
   </style>
+  <style>
+    /* Sidebar removed */
+  </style>
 </head>
 <body>
   <div id="topbar">
@@ -1566,6 +1697,8 @@
       <button id="fullscreenBtn" class="btn" title="Fullscreen"><i class="fa-regular fa-square"></i></button>
     </div>
   </div>
+
+  <!-- Sidebar removed -->
 
   <input id="fileInput" type="file" accept="audio/*" multiple style="display:none" />
 
@@ -1657,6 +1790,9 @@
       <div style="margin-top:10px;">
         <span class="chip">GPU: <span id="aboutGpu">detecting…</span></span>
         <span class="chip">WebGPU: <span id="aboutWebgpu">checking…</span></span>
+      </div>
+      <div style="margin-top:10px;font-size:12px;opacity:.85;font-family: var(--font-mono);">
+        Shortcuts: Space (Play/Pause), ←/→ (Prev/Next), F (Fullscreen), P (Presets), S (Settings), X (Disable), Esc (Close)
       </div>
       <div class="modal-actions">
         <button class="btn" onclick="document.getElementById('aboutModal').classList.remove('open')">Close</button>
