@@ -10,14 +10,41 @@
   NODE_VERSION = "20"
   PNPM_VERSION = "10.6.5"
 
-# The following redirect is intended for use with most SPAs that handle
-# routing internally.
+# Allow direct navigation to examples without rewriting
 [[redirects]]
   from = "/examples/*"
   to = "/examples/:splat"
   status = 200
 
+# Ensure static assets are served as files (no SPA rewrite)
 [[redirects]]
-  from = "/*"
-  to = "/index.html"
+  from = "/assets/*"
+  to = "/assets/:splat"
   status = 200
+
+[[redirects]]
+  from = "/dist/*"
+  to = "/dist/:splat"
+  status = 200
+
+# Optional: keep other HTML routes working (no catch-all to index to avoid intercepting assets)
+
+# Performance and cross-origin headers
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/dist/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Cache-Control = "public, max-age=31536000, immutable"
+    Cross-Origin-Resource-Policy = "cross-origin"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"

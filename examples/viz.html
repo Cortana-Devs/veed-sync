@@ -12,11 +12,20 @@
   <link href="https://fonts.googleapis.com/css2?family=Barrio&family=Inter:wght@300..900&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400..700&display=swap" rel="stylesheet">
 
-  <script type="text/javascript" src="https://unpkg.com/lodash"></script>
-  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
-  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
+  <script type="text/javascript" src="https://unpkg.com/lodash" crossorigin="anonymous"></script>
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js" crossorigin="anonymous"></script>
+  <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js" crossorigin="anonymous"></script>
   <script type="module">
     import veedSync from '../dist/veed-sync.min.js';
+    const _ = (window._ || window.lodash || { throttle: (fn, wait = 100) => {
+      let last = 0, t;
+      return (...args) => {
+        const now = Date.now();
+        const remaining = wait - (now - last);
+        if (remaining <= 0) { last = now; fn(...args); }
+        else { clearTimeout(t); t = setTimeout(() => { last = Date.now(); fn(...args); }, remaining); }
+      };
+    }});
 
     let visualizer = null;
     let rendering = false;
@@ -954,6 +963,27 @@
       if (metaNow) metaNow.textContent = presetKeys[presetIndex] ? presetKeys[presetIndex].substring(0, 80) : '—';
     }
 
+    // Fallback loader in case CDN preset scripts didn't attach
+    function loadScriptOnce(src) {
+      return new Promise((resolve, reject) => {
+        const existing = Array.from(document.querySelectorAll('script')).some(s => s.src === src);
+        if (existing) { resolve(); return; }
+        const s = document.createElement('script');
+        s.src = src; s.async = true; s.crossOrigin = 'anonymous';
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load ' + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function ensurePresetGlobals() {
+      if (window.base && window.extra) return;
+      try {
+        await loadScriptOnce('https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/base.min.js');
+        await loadScriptOnce('https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js');
+      } catch (_) { /* ignore, we'll proceed with whatever is available */ }
+    }
+
     async function initPlayer() {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -976,6 +1006,7 @@
         const ag = document.getElementById('aboutGpu'); if (ag) ag.textContent = 'WebGL2';
       })();
       presets = {};
+      await ensurePresetGlobals();
       loadDisabled();
       if (window.base && window.base.default) Object.assign(presets, window.base.default);
       if (window.extra && window.extra.default) Object.assign(presets, window.extra.default);
