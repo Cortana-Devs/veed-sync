@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barrio&family=Inter:wght@300..900&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400..700&display=swap" rel="stylesheet">
-  <link rel="prefetch" href="/examples/viz.html" />
+  <link rel="prefetch" href="examples/viz.html" />
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
   <style>
@@ -65,8 +65,9 @@
       transform: perspective(1200px) rotateX(0.6deg) translateY(0) scale(0.985);
     }
     .player-wrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
-    .player-chrome { position: absolute; inset: 0; pointer-events: none; }
-    .player-actions { position: absolute; inset: auto 14px 14px 14px; display: flex; gap: 10px; justify-content: flex-end; }
+    .player-chrome { position: absolute; inset: 0; pointer-events: auto; }
+    .player-chrome > * { pointer-events: none; }
+    .player-actions { position: absolute; inset: auto 14px 14px 14px; display: flex; gap: 10px; justify-content: flex-end; pointer-events: auto; z-index: 2; }
     .btn {
       pointer-events: auto; display: grid; place-items:center; width: 44px; height: 44px; border-radius: 12px; cursor: pointer;
       color: var(--fg); background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06)); border: 1px solid rgba(255,255,255,0.16);
@@ -162,12 +163,12 @@
     <div class="player-wrap" id="heroPlayer">
       <div class="halo"></div>
       <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
-      <iframe id="vizFrame" src="/examples/viz.html?embed=1" title="Veed Sync Player" allow="microphone; fullscreen; autoplay" loading="lazy"></iframe>
+      <iframe id="vizFrame" src="examples/viz.html?embed=1" title="Veed Sync Player" allow="microphone; fullscreen; autoplay" loading="lazy"></iframe>
       <div class="player-chrome">
         <div class="badge">Live Preview</div>
         <div class="player-actions">
           <button class="btn" id="heroMic" title="Use Mic"><i class="fa-solid fa-microphone"></i></button>
-          <button class="btn" id="heroOpen" title="Open Full"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+          <a class="btn" id="heroOpen" title="Open Full" href="examples/viz.html" role="button"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></a>
         </div>
       </div>
     </div>
@@ -182,7 +183,7 @@
         <div class="feature"><i class="fa-solid fa-wand-magic-sparkles"></i> <h3>Cinematic FX</h3><p>Bloom, bass shake, downbeat bounce, and quantized transitions.</p></div>
         <div class="feature"><i class="fa-solid fa-layer-group"></i> <h3>Community presets</h3><p>Curated styles from the scene—shuffle or pick your vibe.</p></div>
         <div class="feature"><i class="fa-solid fa-cube"></i> <h3>3D models</h3><p>Load OBJ models with smooth transitions and particle effects.</p></div>
-        <div class="feature"><i class="fa-solid fa-code"></i> <h3>Easy to embed</h3><p>Load <code style="font-family: var(--font-mono)">/examples/viz.html?embed=1</code> and control via postMessage.</p></div>
+        <div class="feature"><i class="fa-solid fa-code"></i> <h3>Easy to embed</h3><p>Load <code style="font-family: var(--font-mono)">examples/viz.html?embed=1</code> and control via postMessage.</p></div>
       </div>
     </div>
   </section>
@@ -204,7 +205,7 @@
       <div class="faq">
         <div class="q"><strong>Does this work with my browser?</strong><br/>Yes. It runs on modern Chromium, Firefox, and Safari. WebGPU falls back to WebGL2 automatically.</div>
         <div class="q"><strong>Can I hear the audio while visualizing?</strong><br/>Yes—use “Monitor audio” in Settings. Toggle off to avoid feedback in mic mode.</div>
-        <div class="q"><strong>How do I embed it?</strong><br/>Load <code style="font-family: var(--font-mono)">/examples/viz.html?embed=1</code> in an iframe and control it via postMessage.</div>
+        <div class="q"><strong>How do I embed it?</strong><br/>Load <code style="font-family: var(--font-mono)">examples/viz.html?embed=1</code> in an iframe and control it via postMessage.</div>
       </div>
     </div>
   </section>
@@ -295,9 +296,21 @@
       wrap.style.margin = '0';
       wrap.style.zIndex = 100;
       // Animate overlay + card to viewport
-      gsap.to([overlay, wrap], { duration: 0.5, left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, borderRadius: 0, ease: 'power2.inOut', onComplete: () => {
-        setTimeout(() => { window.location.href = '/examples/viz.html'; }, 80);
-      }});
+      const go = () => {
+        try {
+          const target = new URL('examples/viz.html', window.location.href);
+          window.location.href = target.toString();
+        } catch(_) {
+          window.location.href = 'examples/viz.html';
+        }
+      };
+      try {
+        gsap.to([overlay, wrap], { duration: 0.5, left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, borderRadius: 0, ease: 'power2.inOut', onComplete: () => {
+          setTimeout(go, 80);
+        }});
+      } catch(_) {
+        go();
+      }
     }
 
     // Animate in hero UI
