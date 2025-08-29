@@ -290,11 +290,28 @@
         startRenderer();
         showToast(`Mic connected${useRNNoise ? ' (RNNoise)' : ''}`);
         announce('Microphone connected');
+        try { document.getElementById('micBtn').classList.add('mic-on'); } catch(_) {}
       } catch (err) {
         console.error('Error getting audio stream from getUserMedia', err);
         showToast('Mic permission denied', true);
         announce('Microphone permission denied');
+        try { document.getElementById('micBtn').classList.remove('mic-on'); } catch(_) {}
       }
+    }
+
+    function disconnectMic(stopStream = true) {
+      try { micSourceNode && micSourceNode.disconnect(); } catch(_) {}
+      try { micGainNode && micGainNode.disconnect(); } catch(_) {}
+      if (stopStream && micStream) {
+        try { micStream.getTracks().forEach(t => t.stop()); } catch(_) {}
+      }
+      micSourceNode = null;
+      micGainNode = null;
+      if (stopStream) micStream = null;
+      micConnected = false;
+      try { document.getElementById('micBtn').classList.remove('mic-on'); } catch(_) {}
+      showToast('Mic off');
+      announce('Microphone disconnected');
     }
 
     function nextPreset(blendTime = 5.7) {
@@ -353,9 +370,14 @@
           micGainNode.connect(tapNode);
           micConnected = true;
         } else {
+          // Fully detach mic from graph
+          try { micSourceNode.disconnect(); } catch(_) {}
+          try { micGainNode.disconnect(); } catch(_) {}
           micConnected = false;
         }
       }
+      // Update mic indicator
+      try { (micConnected ? document.getElementById('micBtn').classList.add('mic-on') : document.getElementById('micBtn').classList.remove('mic-on')); } catch(_) {}
       // Internal routing (local file buffer source)
       if (sourceNode) {
         try { sourceNode.disconnect(); } catch(_) {}
@@ -734,7 +756,9 @@
       // Init luminance probe for adaptive glass opacity
       initLuminanceProbe();
 
-      document.getElementById('micBtn').addEventListener('click', () => connectMic());
+      document.getElementById('micBtn').addEventListener('click', () => {
+        if (micConnected) disconnectMic(true); else connectMic();
+      });
       // Optional toggles stored in localStorage
       try {
         const rn = document.getElementById('settingRNNoise');
@@ -1231,6 +1255,19 @@
       -webkit-backdrop-filter: invert(1) saturate(120%);
       mix-blend-mode: normal;
     }
+    /* Mic active state: greenish glow + inverted icon */
+    .btn.mic-on {
+      border-color: var(--accent);
+      background:
+        radial-gradient(120% 100% at 50% 0%, rgba(192,255,51,0.14), rgba(192,255,51,0.06)),
+        linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05));
+      box-shadow:
+        0 0 0 2px rgba(192,255,51,0.28),
+        0 0 22px rgba(192,255,51,0.22),
+        0 10px 26px rgba(0,0,0,0.24),
+        inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .btn.mic-on i { filter: invert(1) hue-rotate(120deg) saturate(1.2); }
     .btn:focus-visible { outline: 2px solid #5b8cff; outline-offset: 2px; }
 
     #canvas {
