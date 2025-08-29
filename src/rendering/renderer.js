@@ -1,4 +1,5 @@
 import AudioLevels from "../audio/audioLevels";
+import AudioFeatures from "../audio/audioFeatures";
 import blankPreset from "../blankPreset";
 import PresetEquationRunner from "../equations/presetEquationRunner";
 import PresetEquationRunnerWASM from "../equations/presetEquationRunnerWASM";
@@ -71,6 +72,7 @@ export default class Renderer {
     ];
 
     this.audioLevels = new AudioLevels(this.audio);
+    this.audioFeatures = new AudioFeatures(this.audio);
 
     this.prevFrameBuffer = this.gl.createFramebuffer();
     this.targetFrameBuffer = this.gl.createFramebuffer();
@@ -414,6 +416,7 @@ export default class Renderer {
     this.autoVibes = !!enabled;
     this.barsPerVibe = Math.max(1, barsPerVibe | 0);
     this._lastBarCount = this.beatState ? this.beatState.barCount : 0;
+    this._lastVibeFire = this.beatState ? this.beatState.barCount : 0;
   }
 
   loadExtraImages(imageData) {
@@ -533,7 +536,12 @@ export default class Renderer {
       this.lastTime = newTime;
     }
 
-    this.time += 1.0 / this.fps;
+    // Prefer audioContext time for tighter A/V alignment if available
+    if (this.audio && this.audio.audioContext && typeof this.audio.audioContext.currentTime === 'number') {
+      this.time = this.audio.audioContext.currentTime;
+    } else {
+      this.time += 1.0 / this.fps;
+    }
 
     if (this.blending) {
       this.blendProgress =
@@ -1045,7 +1053,7 @@ export default class Renderer {
       Object.assign(globalVars, this.regVars);
     }
 
-    // Provide beat info to preset globals for equations
+    // Provide beat info and features to preset globals for equations
     if (!globalVars.gmegabuf) globalVars.gmegabuf = this.presetEquationRunner.gmegabuf || {};
     if (this.beatState) {
       globalVars.beat_phase = this.beatState.phase;
@@ -1069,6 +1077,17 @@ export default class Renderer {
       globalVars.on_bass = 0;
       globalVars.on_mid = 0;
       globalVars.on_treb = 0;
+    }
+
+    // Compute low-level features and publish
+    const feats = this.audioFeatures.update();
+    if (feats) {
+      globalVars.rms = feats.rms;
+      globalVars.zcr = feats.zcr;
+      globalVars.centroid_hz = feats.centroidHz;
+      globalVars.rolloff_hz = feats.rolloffHz;
+      globalVars.crest = feats.crest;
+      globalVars.energy = feats.energy;
     }
 
     const mdVSFrame = this.presetEquationRunner.runFrameEquations(globalVars);
@@ -1238,13 +1257,14 @@ export default class Renderer {
       this.particleModel.pointSize = pointSize;
       this.particleModel.spinSpeed = spinSpeed;
       // Cinematic camera dolly (subtle)
-      // Beat/shot detection
-      this.energyEMA = 0.85 * this.energyEMA + 0.15 * energy;
+      // Beat/shot detection with tighter smoothing and thresholding
+      this.energyEMA = 0.88 * this.energyEMA + 0.12 * energy;
       const energyDelta = energy - this.energyEMA;
       const now = this.time;
       const canTrigger = (now - this.lastShotTime) > 1.2; // cooldown
-      const beatHit = this.beatState?.onBeat && (this.beatState?.confidence || 0) > 0.2;
-      if ((energyDelta > 0.18 || beatHit) && canTrigger) {
+      const conf = (this.beatState?.confidence || 0);
+      const beatHit = this.beatState?.onBeat && conf > 0.35;
+      if ((energyDelta > 0.22 || beatHit) && canTrigger) {
         this._startCameraShot(energy);
         this.lastShotTime = now;
       }
@@ -1254,11 +1274,11 @@ export default class Renderer {
       const framing = this.particleModel.getFramingInfo();
       const faceY = framing.faceY || 0.5;
       // Decay event router states
-      const conf = Math.max(0, Math.min(1, this.beatState?.confidence || 0));
+      const conf2 = Math.max(0, Math.min(1, this.beatState?.confidence || 0));
       this._camNudgeZ *= 0.92; this._camNudgeSide *= 0.90; this._fovNarrow *= 0.92; this._particlesBurst *= 0.88; this._grainSpark *= 0.85;
-      if (this.beatState?.onBass) { this._camNudgeZ += 0.9 * conf; this._fovNarrow += 0.6 * conf; this._camNudgeSide += 0.25 * conf; }
-      if (this.beatState?.onMid) { this._particlesBurst += 0.9 * conf; }
-      if (this.beatState?.onTreb) { this._grainSpark += 0.7 * conf; }
+      if (this.beatState?.onBass) { this._camNudgeZ += 0.9 * conf2; this._fovNarrow += 0.6 * conf2; this._camNudgeSide += 0.25 * conf2; }
+      if (this.beatState?.onMid) { this._particlesBurst += 0.9 * conf2; }
+      if (this.beatState?.onTreb) { this._grainSpark += 0.7 * conf2; }
 
       const baseEyeZ = 2.4 - 0.35 * energy - 0.20 * this._camNudgeZ; // closer for portrait, bass punch-in
       const baseEyeY = faceY + 0.06 + 0.08 * Math.sin(this.time * 0.45);
@@ -1667,6 +1687,12 @@ export default class Renderer {
   setQuantizedTransitions(enabled = true, bars = 1) {
     this.quantizeTransitions = !!enabled;
     this.quantizeBars = Math.max(1, bars | 0);
+  }
+
+  // Enable synced transitions and auto-vibes by default for calmer visuals
+  enableSyncedDefaults() {
+    this.setQuantizedTransitions(true, 2);
+    this.enableAutoVibes(true, 4);
   }
 
   // ---- Audio responsiveness controls ----

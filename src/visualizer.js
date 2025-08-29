@@ -4,6 +4,7 @@ import AudioProcessor from "./audio/audioProcessor";
 import NoiseSuppressor from "./audio/noiseSuppression";
 import BeatSync from "./audio/beatSync";
 import Renderer from "./rendering/renderer";
+import WebGPUCompositor from "./rendering/webgpuCompositor";
 import Utils from "./utils";
 import loadPresetFunctionsBuffer from "./assemblyscript/presetFunctions.ts";
 import { initializeRNG } from "./utils/rngContext";
@@ -58,6 +59,12 @@ export default class Visualizer {
     this.outputGl = this.directCanvas
       ? null
       : canvas.getContext('2d', { willReadFrequently: false });
+
+    // Experimental WebGPU compositor for final blit (optional)
+    this.webgpuCompositor = null;
+    if (opts && opts.backend === 'webgpu' && typeof navigator !== 'undefined' && navigator.gpu) {
+      try { this.webgpuCompositor = new WebGPUCompositor(canvas); } catch(_) {}
+    }
 
     this.baseValsDefaults = {
       decay: 0.98,
@@ -301,6 +308,7 @@ export default class Visualizer {
 
     this.renderer = new Renderer(this.gl, this.audio, opts);
     if (this.renderer && this.renderer.setBeatSync) this.renderer.setBeatSync(this.beatSync);
+    if (this.renderer && this.renderer.enableSyncedDefaults) this.renderer.enableSyncedDefaults();
   }
 
   loseGLContext() {
@@ -897,6 +905,7 @@ export default class Visualizer {
     if (this.outputGl) {
       this.outputGl.drawImage(this.internalCanvas, 0, 0);
     }
+    // Future: if webgpuCompositor present, we could present via ImageBitmap
 
     return renderOutput;
   }

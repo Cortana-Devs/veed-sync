@@ -122,7 +122,9 @@ export default class BlendPattern {
   }
 
   createBlendPattern() {
-    const mixType = 1 + Math.floor(this.rng.random() * 3);
+    // Reduce chaos: bias to directional and plasma, avoid radial extremes often
+    const r = this.rng.random();
+    const mixType = r < 0.55 ? 1 : (r < 0.92 ? 2 : 3);
     if (mixType === 0) {
       // not currently used
       let nVert = 0;
@@ -137,7 +139,7 @@ export default class BlendPattern {
       const ang = this.rng.random() * 6.28;
       const vx = Math.cos(ang);
       const vy = Math.sin(ang);
-      const band = 0.1 + 0.2 * this.rng.random();
+      const band = 0.14 + 0.14 * this.rng.random();
       const invBand = 1.0 / band;
 
       let nVert = 0;
@@ -155,7 +157,7 @@ export default class BlendPattern {
         }
       }
     } else if (mixType === 2) {
-      const band = 0.12 + 0.13 * this.rng.random();
+      const band = 0.15 + 0.10 * this.rng.random();
       const invBand = 1.0 / band;
 
       this.vertInfoC[0] = this.rng.random();
@@ -193,7 +195,7 @@ export default class BlendPattern {
         }
       }
     } else if (mixType === 3) {
-      const band = 0.02 + 0.14 * this.rng.random() + 0.34 * this.rng.random();
+      const band = 0.12 + 0.12 * this.rng.random();
       const invBand = 1.0 / band;
       const dir = Math.floor(this.rng.random() * 2) * 2 - 1;
 

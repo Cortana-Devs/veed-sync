@@ -2,13 +2,17 @@
 # unless otherwise overridden by more specific contexts.
 [build]
   publish = "./"
-
   # Default build command.
-  command = "yarn run dev-build"
+  command = "pnpm build"
+
+[build.environment]
+  # Optional: ensure consistent engines on Netlify
+  NODE_VERSION = "20"
+  PNPM_VERSION = "10.6.5"
 
 # The following redirect is intended for use with most SPAs that handle
 # routing internally.
 [[redirects]]
   from = "/*"
-  to = "/experiments/wasm-eel/index.html"
+  to = "/examples/viz.html"
   status = 200
